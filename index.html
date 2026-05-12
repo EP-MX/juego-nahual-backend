@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Lobo - Interfaz Básica</title>
+    <style>
+        body { font-family: monospace; background-color: #1e1e1e; color: #00ff00; padding: 20px; }
+        input, button { padding: 10px; margin: 5px; font-family: monospace; }
+        .pantalla { border: 1px solid #00ff00; padding: 20px; max-width: 500px; }
+    </style>
+</head>
+<body>
+
+    <h1>Rancheros vs Nahuales - Pruebas</h1>
+
+    <!-- PANTALLA 1: LOGIN -->
+    <div id="pantalla-login" class="pantalla">
+        <h3>Identificación</h3>
+        <input type="text" id="input-nombre" placeholder="Ingresa tu apodo">
+        <hr>
+        <button onclick="crearSala()">Crear Sala (Ser Narrador)</button>
+        <br><br>
+        <input type="text" id="input-codigo" placeholder="Código VR80" maxlength="4">
+        <button onclick="unirseSala()">Unirse a Sala</button>
+        <p id="mensaje-error" style="color: red;"></p>
+    </div>
+
+    <!-- PANTALLA 2: LOBBY -->
+    <div id="pantalla-lobby" class="pantalla" style="display: none;">
+        <h2>Sala Activa: <span id="display-codigo"></span></h2>
+        <p>Tu rol temporal: <strong id="display-rol">Esperando inicio...</strong></p>
+        
+        <h3>Jugadores Conectados:</h3>
+        <ul id="lista-jugadores"></ul>
+
+        <!-- Este botón solo lo verá el Narrador -->
+        <button id="btn-iniciar" onclick="iniciarPartida()" style="display: none; background-color: white; color: black;">
+            EMPEZAR JUEGO
+        </button>
+    </div>
+
+    <script>
+        const API_URL = "http://127.0.0.1:8000";
+        let miNombre = "";
+        let miSala = "";
+        let intervaloActualizacion;
+        let pollingPausado = false;
+
+        // Función 1: Crear Sala
+        async function crearSala() {
+            miNombre = document.getElementById("input-nombre").value;
+            if (!miNombre) return alert("Pon un nombre");
+
+            const respuesta = await fetch(`${API_URL}/crear-sala`, {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({ nombre_narrador: miNombre })
+            });
+            const datos = await respuesta.json();
+            
+            miSala = datos.codigo;
+            entrarAlLobby(true);
+        }
+
+        // Función 2: Unirse a Sala
+        async function unirseSala() {
+            miNombre = document.getElementById("input-nombre").value;
+            miSala = document.getElementById("input-codigo").value.toUpperCase();
+            if (!miNombre || !miSala) return alert("Faltan datos");
+
+            const respuesta = await fetch(`${API_URL}/unirse-sala`, {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({ nombre_jugador: miNombre, codigo_sala: miSala })
+            });
+
+            if (respuesta.ok) {
+                entrarAlLobby(false);
+            } else {
+                const error = await respuesta.json();
+                document.getElementById("mensaje-error").innerText = error.detail;
+            }
+        }
+
+        // Función 3: Cambiar de pantalla y empezar a leer la sala
+        function entrarAlLobby(esNarrador) {
+            document.getElementById("pantalla-login").style.display = "none";
+            document.getElementById("pantalla-lobby").style.display = "block";
+            document.getElementById("display-codigo").innerText = miSala;
+            
+            if (esNarrador) {
+                document.getElementById("btn-iniciar").style.display = "block";
+                document.getElementById("display-rol").innerText = "NARRADOR";
+            }
+
+            actualizarSala();
+            intervaloActualizacion = setInterval(actualizarSala, 2000);
+        }
+
+            let enamoradosElegidos = [];
+
+        function seleccionarEnamorado(nombre) {
+            if (enamoradosElegidos.length >= 2) return;
+            if (enamoradosElegidos.includes(nombre)) return;
+            enamoradosElegidos.push(nombre);
+            document.getElementById("seleccion-cupido").innerText = "Elegidos: " + enamoradosElegidos.join(" y ");
+            if (enamoradosElegidos.length === 2) {
+                document.getElementById("btn-confirmar-cupido").style.display = "block";
+            }
+        }
+
+        async function usarCazador(nombreObjetivo) {
+        await fetch(`${API_URL}/accion/cazador`, {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({
+                codigo_sala: miSala,
+                nombre_cazador: miNombre,
+                nombre_objetivo: nombreObjetivo
+                })
+            });
+        }
+
+        async function enviarCupido() {
+            await fetch(`${API_URL}/accion/cupido`, {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({
+                    codigo_sala: miSala,
+                    nombre_cupido: miNombre,
+                    enamorado_1: enamoradosElegidos[0],
+                    enamorado_2: enamoradosElegidos[1]
+                })
+            });
+            enamoradosElegidos = []; 
+            pollingPausado = false; 
+        }
+
+        async function votarLobo(nombreVictima) {
+            await fetch(`${API_URL}/accion/lobos`, {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({
+                    codigo_sala: miSala,
+                    nombre_lobo: miNombre,
+                    nombre_objetivo: nombreVictima
+        })
+    });
+}
+
+        async function votarDia(nombreAcusado) {
+            await fetch(`${API_URL}/accion/votar-dia`, {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({
+                    codigo_sala: miSala,
+                    nombre_votante: miNombre,
+                    nombre_acusado: nombreAcusado
+                })
+            });
+        }
+
+        async function usarVidente(nombreObjetivo) {
+            const respuesta = await fetch(`${API_URL}/accion/vidente`, {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({
+                    codigo_sala: miSala,
+                    nombre_vidente: miNombre,
+                    nombre_objetivo: nombreObjetivo
+                })
+            });
+    
+            if (respuesta.ok) {
+                const resultado = await respuesta.json();
+                alert(`Tu bola de cristal muestra que... ${nombreObjetivo} es ${resultado.rol_descubierto}`);
+            } else {
+                const error = await respuesta.json();
+                alert("Error: " + error.detail);
+            }
+        }
+
+        async function anunciarDia() {
+            await fetch(`${API_URL}/narrador/avanzar`, {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({
+                    codigo_sala: miSala,
+                    nombre_narrador: miNombre
+                })
+            });
+        }
+
+        async function anunciarNoche() {
+            await fetch(`${API_URL}/narrador/avanzar`, {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({
+                    codigo_sala: miSala,
+                    nombre_narrador: miNombre
+                })
+            });
+        }
+
+        async function usarBruja(salvar, objetivoMuerte) {
+            await fetch(`${API_URL}/accion/bruja`, {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({
+                    codigo_sala: miSala,
+                    nombre_bruja: miNombre,
+                    usar_pocion_vida: salvar,
+                    objetivo_pocion_muerte: objetivoMuerte
+                })
+            });
+        }
+        let ultimoEstadoConocido = ""; 
+        // Función 4: Obtener datos de la sala en tiempo real
+
+        async function actualizarSala() {
+            if (pollingPausado) return;
+            const respuesta = await fetch(`${API_URL}/sala/${miSala}`);
+            const sala = await respuesta.json();
+
+            // 1. jugadores y si están vivos/muertos
+            const ul = document.getElementById("lista-jugadores");
+            ul.innerHTML = ""; 
+            let miRol = "narrador";
+            let estoyVivo = true;
+
+            sala.jugadores.forEach(jugador => {
+                const li = document.createElement("li");
+                const mostrarMuerto = jugador.vivo === false && 
+                    sala.estado !== "esperando_narrador_dia" &&
+                    !["turno_cupido", "turno_vidente", "turno_lobos", "turno_bruja", "confirmando_lobos"].includes(sala.estado);
+                
+                let texto = `${jugador.nombre} - ${mostrarMuerto ? "💀 MUERTO" : "VIVO"}`;
+                if (sala.estado === "esperando_jugadores" || miNombre === jugador.nombre || miNombre === sala.jugadores[0].nombre) {
+                    texto += ` (${jugador.rol})`; 
+                }
+                li.innerText = texto;
+                ul.appendChild(li);
+                
+                if(jugador.nombre === miNombre) {
+                    miRol = jugador.rol;
+                    estoyVivo = jugador.vivo;
+                    if(sala.estado !== "esperando_jugadores" && miRol !== "narrador") {
+                        document.getElementById("display-rol").innerText = miRol + (estoyVivo ? "" : " (FANTASMA)");
+                    }
+                }
+            });
+
+            // 2. Control del botón de inicio (solo Narrador)
+            if(sala.estado !== "esperando_jugadores") {
+                document.getElementById("btn-iniciar").style.display = "none";
+            }
+
+            // 3. MÁQUINA DE ESTADOS VISUAL (Lo que se ve en depende del turno)
+           
+            let controlesHTML = `<h3>Estado: ${sala.estado.toUpperCase()}</h3>`;
+
+            if (!estoyVivo) {
+                controlesHTML += `<p>Estás muerto. Observa en silencio.</p>`;
+            } 
+            // TURNO: CUPIDO
+            else if (sala.estado === "turno_cupido" && miRol === "Cupido") {
+                pollingPausado = true; 
+                controlesHTML += `<p>Selecciona a dos enamorados:</p>`;
+                sala.jugadores.filter(j => j.rol !== 'narrador').forEach(j => {
+                    controlesHTML += `<button onclick="seleccionarEnamorado('${j.nombre}')">${j.nombre}</button> `;
+                });
+                controlesHTML += `<p id="seleccion-cupido"></p>
+                                <button id="btn-confirmar-cupido" style="display:none; background: #00ff00; color: black;" onclick="enviarCupido()">Lanzar Flechas</button>`;
+            } 
+            // TURNO: VIDENTE (Faltaba en la nueva)
+            else if (sala.estado === "turno_vidente" && miRol === "Vidente") {
+                controlesHTML += `<p>¿A quién quieres investigar?</p>`;
+                sala.jugadores.filter(j => j.nombre !== miNombre && j.rol !== 'narrador').forEach(j => {
+                    controlesHTML += `<button onclick="usarVidente('${j.nombre}')">Ver rol de ${j.nombre}</button> `;
+                });
+            }
+                        // TURNO: LOBOS
+            else if (sala.estado === "turno_lobos" && miRol === "Hombre Lobo") {
+                const votosLobos = sala.votos_lobos || [];
+                const yoVote = votosLobos.find(v => v.lobo === miNombre);
+
+                if (yoVote) {
+                    controlesHTML += `<p style="color:#00ff00">Seleccionaste a <strong>${yoVote.voto}</strong> para eliminarlo.</p>`;
+                } else {
+                    controlesHTML += `<p>¿A quién van a devorar?</p>`;
+                    sala.jugadores.filter(j => j.vivo && j.rol !== 'narrador' && j.rol !== 'Hombre Lobo').forEach(j => {
+                        controlesHTML += `<button onclick="votarLobo('${j.nombre}')">Matar a ${j.nombre}</button> `;
+                    });
+                }
+
+                controlesHTML += `<p style="margin-top:10px">Votos actuales:</p>`;
+                const lobosVivos = sala.jugadores.filter(j => j.rol === 'Hombre Lobo' && j.vivo);
+                lobosVivos.forEach(lobo => {
+                    const voto = votosLobos.find(v => v.lobo === lobo.nombre);
+                    controlesHTML += `<p>${lobo.nombre}: ${voto ? `→ ${voto.voto}` : "esperando..."}</p>`;
+                });
+
+                if (votosLobos.length === lobosVivos.length && votosLobos.length > 0) {
+                    const todosIgual = votosLobos.every(v => v.voto === votosLobos[0].voto);
+                    if (todosIgual) {
+                        controlesHTML += `<p style="color:red">¡Consenso! Eliminando a ${votosLobos[0].voto} en 5 segundos...</p>`;
+                    } else {
+                        controlesHTML += `<p style="color:orange">No hay unanimidad. Nadie morirá esta noche.</p>`;
+                    }
+                }
+            }
+            // CONFIRMACION LOBOS
+            else if (sala.estado === "confirmando_lobos" && miRol === "Hombre Lobo") {
+                const votosLobos = sala.votos_lobos || [];
+                const yoVote = votosLobos.find(v => v.lobo === miNombre);
+                const todosIgual = votosLobos.length > 0 && votosLobos.every(v => v.voto === votosLobos[0].voto);
+
+                if (yoVote) {
+                    controlesHTML += `<p style="color:#00ff00">Seleccionaste a <strong>${yoVote.voto}</strong> para eliminarlo.</p>`;
+                }
+
+                controlesHTML += `<p style="margin-top:10px">Votos finales:</p>`;
+                votosLobos.forEach(v => {
+                    controlesHTML += `<p>${v.lobo} → <strong>${v.voto}</strong></p>`;
+                });
+
+                if (todosIgual) {
+                    controlesHTML += `<p style="color:red">¡Consenso! <strong>${votosLobos[0].voto}</strong> será eliminado...</p>`;
+                } else {
+                    controlesHTML += `<p style="color:orange">Sin unanimidad. Nadie muere esta noche.</p>`;
+                }
+            }
+            // TURNO: Bruja
+            else if (sala.estado === "turno_bruja" && miRol === "Bruja") {
+                const victima = sala.victima_lobos;
+                const brujaData = sala.jugadores.find(j => j.nombre === miNombre); // <-- ESTA LÍNEA FALTABA
+                controlesHTML += `<p>Los lobos van a matar a: <strong>${victima ?? "nadie"}</strong></p>`;
+
+                if (victima && brujaData?.pocion_vida !== false) {
+                    controlesHTML += `<button onclick="usarBruja(true, null)">Salvar a ${victima} (poción de vida)</button> `;
+                }
+
+                if (brujaData?.pocion_muerte !== false) {
+                    controlesHTML += `<p>¿Usar poción de muerte?</p>`;
+                    sala.jugadores.filter(j => j.vivo && j.rol !== 'narrador').forEach(j => {
+                        controlesHTML += `<button onclick="usarBruja(false, '${j.nombre}')">Matar a ${j.nombre}</button> `;
+                    });
+                }
+                
+                controlesHTML += `<br><button onclick="usarBruja(false, null)" style="background:#00ff00;color:black">Pasar (no usar pociones)</button>`;
+            }
+
+            // TURNO: CAZADOR NO IMPLEMENTADO 
+            else if (sala.estado === "turno_cazador" && miRol === "Cazador") {
+                controlesHTML += `<p style="color:red">Has muerto, pero puedes llevarte a alguien contigo.</p>`;
+                controlesHTML += `<p>¿A quién dispararás?</p>`;
+                sala.jugadores.filter(j => j.vivo && j.rol !== 'narrador' && j.nombre !== miNombre).forEach(j => {
+                    controlesHTML += `<button onclick="usarCazador('${j.nombre}')">Disparar a ${j.nombre}</button> `;
+                });
+            }
+
+            // TURNO: DÍA (Votación)
+            else if (sala.estado === "dia" && miRol !== "narrador") {
+                const votosDia = sala.votos_dia || [];
+                const yoVote = votosDia.find(v => v.votante === miNombre);
+
+                // Anuncio de muertes de la noche - solo se ve cuando ya es de día
+                const reporteMuertes = sala.reporte_muertes || [];
+                if (reporteMuertes.length > 0) {
+                    controlesHTML += `<p style="color:red">Esta noche murieron: <strong>${reporteMuertes.join(", ")}</strong></p>`;
+                } else {
+                    controlesHTML += `<p style="color:gray">Esta noche no murió nadie.</p>`;
+                }
+                const jugadoresVivos = sala.jugadores.filter(j => j.vivo && j.rol !== 'narrador');
+
+                if (yoVote) {
+                    controlesHTML += `<p style="color:#00ff00">Votaste por <strong>${yoVote.acusado}</strong>.</p>`;
+                } else {
+                    controlesHTML += `<p>¿A quién quieren linchar?</p>`;
+                    sala.jugadores.filter(j => j.vivo && j.rol !== 'narrador' && j.nombre !== miNombre).forEach(j => {
+                        controlesHTML += `<button onclick="votarDia('${j.nombre}')">Votar por ${j.nombre}</button> `;
+                    });
+                }
+
+                // Conteo de votos en tiempo real
+                controlesHTML += `<p style="margin-top:10px">Votos actuales (${votosDia.length}/${jugadoresVivos.length}):</p>`;
+                
+                // Contar cuántos votos tiene cada acusado
+                const conteo = {};
+                votosDia.forEach(v => {
+                    conteo[v.acusado] = (conteo[v.acusado] || 0) + v.peso;
+                });
+
+                // Mostrar a cada jugador vivo con sus votos
+                sala.jugadores.filter(j => j.vivo && j.rol !== 'narrador').forEach(j => {
+                    const votos = conteo[j.nombre] || 0;
+                    const barra = votos > 0 ? `→ ${votos} voto${votos > 1 ? 's' : ''}` : 'sin votos';
+                    controlesHTML += `<p>${j.nombre}: ${barra}</p>`;
+                });
+            }
+            // FIN DEL JUEGO 
+            else if (sala.estado === "victoria_lobos" || sala.estado === "victoria_aldeanos") {
+                const ganador = sala.estado === "victoria_lobos" ? "LOS LOBOS 🐺" : "LOS ALDEANOS 👨‍🌾";
+                controlesHTML += `<h2 style="color: gold;">¡JUEGO TERMINADO!</h2>
+                                <h3>Ganadores: ${ganador}</h3>
+                                <button onclick="location.reload()">Jugar otra vez</button>`;
+            } 
+            // PANEL DEL NARRADOR
+else if (miRol === "narrador") {
+    if (sala.estado === "esperando_jugadores") {
+        controlesHTML += `<p>Esperando jugadores... cuando estén todos presiona EMPEZAR JUEGO.</p>`;
+    } else {
+        controlesHTML += `<p style="color:yellow">--- PANEL DEL NARRADOR ---</p>`;
+
+        // Info de enamorados (solo si ya hay alguno)
+        const enamorados = sala.jugadores.filter(j => j.enamorado);
+        if (enamorados.length > 0) {
+            controlesHTML += `<p> Enamorados: ${enamorados.map(j => j.nombre).join(" y ")}</p>`;
+        }
+
+        // Info de la Bruja (solo si está viva)
+        const bruja = sala.jugadores.find(j => j.rol === "Bruja" && j.vivo);
+        if (bruja) {
+            controlesHTML += `<p> Bruja (${bruja.nombre}): 
+                Poción vida: ${bruja.pocion_vida ? " disponible" : " gastada"} | 
+                Poción muerte: ${bruja.pocion_muerte ? " disponible" : " gastada"}
+            </p>`;
+        }
+
+        // Turno activo info
+        controlesHTML += `<p style="color:gray">Turno activo: ${sala.estado}</p>`;
+
+        // Botón "Se hizo de día" - cuando toda la noche terminó
+        if (sala.estado === "esperando_narrador_dia") {
+            const reporteMuertes = sala.reporte_muertes || [];
+            if (reporteMuertes.length > 0) {
+                controlesHTML += `<p style="color:red"> Murieron esta noche: <strong>${reporteMuertes.join(", ")}</strong></p>`;
+            } else {
+                controlesHTML += `<p style="color:gray">Esta noche no murió nadie.</p>`;
+            }
+            controlesHTML += `
+                <p style="color:gray">Anuncia las muertes y presiona:</p>
+                <button style="background:orange;color:black;margin-top:10px" onclick="anunciarDia()"> Se hizo de día</button>
+            `;
+        }
+
+        // Fase de día - solo muestra conteo de votos
+        if (sala.estado === "dia") {
+            const votosDia = sala.votos_dia || [];
+            const jugadoresVivos = sala.jugadores.filter(j => j.vivo && j.rol !== "narrador");
+            controlesHTML += `<p style="color:yellow">La votación del pueblo está en curso...</p>`;
+            controlesHTML += `<p>Votos: ${votosDia.length} / ${jugadoresVivos.length}</p>`;
+        }
+
+        // Botón "Se hizo de noche" - cuando la votación terminó y el narrador anuncia
+        if (sala.estado === "esperando_narrador_noche") {
+            const ultimoLinchado = sala.ultimo_linchado || [];
+            if (ultimoLinchado.length > 0) {
+                controlesHTML += `<p style="color:red"> Eliminados: <strong>${ultimoLinchado.join(", ")}</strong></p>`;
+            } else {
+                controlesHTML += `<p style="color:gray">Hubo empate, nadie fue eliminado.</p>`;
+            }
+            controlesHTML += `
+                <p style="color:gray">Anuncia al eliminado y presiona:</p>
+                <button style="background:yellow;color:black;margin-top:10px" onclick="anunciarNoche()">🌙 Se hizo de noche</button>
+            `;
+        }
+    }
+}
+
+// ESPERANDO QUE EL NARRADOR ANUNCIE EL DÍA
+            else if (sala.estado === "esperando_narrador_dia" && miRol !== "narrador") {
+                controlesHTML += `<p> La noche termina... esperando al Narrador.</p>`;
+            }
+
+            // ESPERANDO QUE EL NARRADOR ANUNCIE LA NOCHE
+            else if (sala.estado === "esperando_narrador_noche" && miRol !== "narrador") {
+                const ultimoLinchado = sala.ultimo_linchado || [];
+                if (ultimoLinchado.length > 0) {
+                    controlesHTML += `<p style="color:red"> Eliminados: <strong>${ultimoLinchado.join(", ")}</strong></p>`;
+                } else {
+                    controlesHTML += `<p style="color:gray">Hubo empate, nadie fue eliminado.</p>`;
+                }
+                controlesHTML += `<p> El día termina... esperando al Narrador.</p>`;
+            }
+
+            // ESPERA jugadores normales
+            else {
+                controlesHTML += `<p>Espera tu turno... el Narrador o los otros personajes están actuando.</p>`;
+            }
+
+            // Inyectamos los controles en un div nuevo
+            let divControles = document.getElementById("controles-juego");
+            if (!divControles) {
+                divControles = document.createElement("div");
+                divControles.id = "controles-juego";
+                document.getElementById("pantalla-lobby").appendChild(divControles);
+            }
+            divControles.innerHTML = controlesHTML;
+        }
+
+        // Función 5: Iniciar Juego (Solo Narrador)
+        async function iniciarPartida() {
+            await fetch(`${API_URL}/iniciar-juego`, {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({ codigo_sala: miSala })
+            });
+        }
+    </script>
+</body>
+</html>
