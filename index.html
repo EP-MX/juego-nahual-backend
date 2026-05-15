@@ -41,7 +41,7 @@
 
     <script>
         //const API_URL = "http://127.0.0.1:8000";
-        const API_URL = "https://nahuales-vs-rancheros.onrender.com";
+        const API_URL = "https://nahuales-vs-rancheros.onrender.com";   
         let miNombre = "";
         let miSala = "";
         let intervaloActualizacion;
@@ -215,7 +215,7 @@
                 })
             });
         }
-        let ultimoEstadoConocido = ""; 
+        //let ultimoEstadoConocido = ""; 
         // Función 4: Obtener datos de la sala en tiempo real
 
         async function actualizarSala() {
@@ -229,12 +229,17 @@
             let miRol = "narrador";
             let estoyVivo = true;
 
+            const cicloCurrent = sala.ciclo || 1;
+            const estadosNocturnosOcultos = ["turno_cupido", "turno_vidente", "turno_lobos", "turno_bruja", "confirmando_lobos", "esperando_narrador_dia"];
+
             sala.jugadores.forEach(jugador => {
                 const li = document.createElement("li");
-                const mostrarMuerto = jugador.vivo === false && 
-                    sala.estado !== "esperando_narrador_dia" &&
-                    !["turno_cupido", "turno_vidente", "turno_lobos", "turno_bruja", "confirmando_lobos"].includes(sala.estado);
-                
+                const muertoEsteCiclo = jugador.ciclo_muerte === cicloCurrent;
+                const esFaseNocturna = estadosNocturnosOcultos.includes(sala.estado);
+                const ocultarPorNoche = muertoEsteCiclo && esFaseNocturna;
+                const muertoAntes = jugador.vivo === false && (jugador.ciclo_muerte || 0) < cicloCurrent;
+                const mostrarMuerto = (jugador.vivo === false && !ocultarPorNoche) || muertoAntes;
+
                 let texto = `${jugador.nombre} - ${mostrarMuerto ? "💀 MUERTO" : "VIVO"}`;
                 if (sala.estado === "esperando_jugadores" || miNombre === jugador.nombre || miNombre === sala.jugadores[0].nombre) {
                     texto += ` (${jugador.rol})`; 
@@ -246,7 +251,10 @@
                     miRol = jugador.rol;
                     estoyVivo = jugador.vivo;
                     if(sala.estado !== "esperando_jugadores" && miRol !== "narrador") {
-                        document.getElementById("display-rol").innerText = miRol + (estoyVivo ? "" : " (FANTASMA)");
+                        const soyMuertoEsteCiclo = jugador.ciclo_muerte === cicloCurrent;
+                        const soyMuertoAntes = !estoyVivo && (jugador.ciclo_muerte || 0) < cicloCurrent;
+                        const mostrarComoMuerto = soyMuertoAntes || (!estoyVivo && !(soyMuertoEsteCiclo && esFaseNocturna));
+                        document.getElementById("display-rol").innerText = miRol + (mostrarComoMuerto ? " (FANTASMA)" : "");
                     }
                 }
             });
@@ -260,9 +268,14 @@
            
             let controlesHTML = `<h3>Estado: ${sala.estado.toUpperCase()}</h3>`;
 
-            if (!estoyVivo) {
+            const miJugador = sala.jugadores.find(j => j.nombre === miNombre);
+            const soyMuertoEsteCicloControles = miJugador?.ciclo_muerte === cicloCurrent;
+            const soyMuertoAntesControles = !estoyVivo && (miJugador?.ciclo_muerte || 0) < cicloCurrent;
+            const mostrarComoMuertoEnControles = soyMuertoAntesControles || (!estoyVivo && !(soyMuertoEsteCicloControles && estadosNocturnosOcultos.includes(sala.estado)));
+
+            if (mostrarComoMuertoEnControles && sala.estado !== "turno_cazador") {
                 controlesHTML += `<p>Estás muerto. Observa en silencio.</p>`;
-            } 
+            }
             // TURNO: CUPIDO
             else if (sala.estado === "turno_cupido" && miRol === "Cupido") {
                 pollingPausado = true; 
@@ -351,15 +364,15 @@
                 controlesHTML += `<br><button onclick="usarBruja(false, null)" style="background:#00ff00;color:black">Pasar (no usar pociones)</button>`;
             }
 
-            // TURNO: CAZADOR NO IMPLEMENTADO 
             else if (sala.estado === "turno_cazador" && miRol === "Cazador") {
-                controlesHTML += `<p style="color:red">Has muerto, pero puedes llevarte a alguien contigo.</p>`;
+                controlesHTML += `<p style="color:red; font-weight:bold;">¡ÚLTIMO ALIENTO!</p>`;
+                controlesHTML += `<p>Has muerto, pero puedes llevarte a alguien contigo.</p>`;
                 controlesHTML += `<p>¿A quién dispararás?</p>`;
+                
                 sala.jugadores.filter(j => j.vivo && j.rol !== 'narrador' && j.nombre !== miNombre).forEach(j => {
                     controlesHTML += `<button onclick="usarCazador('${j.nombre}')">Disparar a ${j.nombre}</button> `;
                 });
             }
-
             // TURNO: DÍA (Votación)
             else if (sala.estado === "dia" && miRol !== "narrador") {
                 const votosDia = sala.votos_dia || [];
