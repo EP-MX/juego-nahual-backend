@@ -129,25 +129,23 @@ async def crear_sala(datos: CrearSalaRequest):
 
 @app.post("/unirse-sala")
 async def unirse_sala(datos: UnirseSalaRequest):
-    # 1. Buscar si la sala existe en MongoDB
     sala = await db.partidas.find_one({"codigo_sala": datos.codigo_sala})
 
     if not sala:
         raise HTTPException(status_code=404, detail="Sala no encontrada. Verifica el código.")
 
-    if sala["estado"] != "esperando_jugadores":
-        raise HTTPException(status_code=400, detail="La partida ya comenzó o está cerrada.")
-
-    # En main.py -> @app.post("/unirse-sala")
     nombre_existe = any(j["nombre"].lower() == datos.nombre_jugador.lower() for j in sala["jugadores"])
 
     if nombre_existe:
         if sala["estado"] == "esperando_jugadores":
             raise HTTPException(status_code=400, detail="Ese nombre ya está en uso.")
-    else:
-        # Si la partida ya inició, permitimos "reentrar"
-        return {"mensaje": f"Reconectando a {datos.nombre_jugador}..."}
-    
+        else:
+            # Si la partida ya inició, permitimos reconectar
+            return {"mensaje": f"Reconectando a {datos.nombre_jugador}..."}
+
+    if sala["estado"] != "esperando_jugadores":
+        raise HTTPException(status_code=400, detail="La partida ya comenzó o está cerrada.")
+
     # 2. datos del nuevo jugador
     nuevo_jugador = {
         "nombre": datos.nombre_jugador, 
@@ -161,7 +159,6 @@ async def unirse_sala(datos: UnirseSalaRequest):
     )
     
     return {"mensaje": f"¡{datos.nombre_jugador} se ha unido a la sala {datos.codigo_sala}!"}
-
 @app.get("/sala/{codigo_sala}")
 async def obtener_sala(codigo_sala: str):
     sala = await db.partidas.find_one({"codigo_sala": codigo_sala})

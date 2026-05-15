@@ -42,8 +42,8 @@
     </div>
 
     <script>
-        //const API_URL = "http://127.0.0.1:8000";
-        const API_URL = "https://nahuales-vs-rancheros.onrender.com";   
+        const API_URL = "http://127.0.0.1:8000";
+        //const API_URL = "https://nahuales-vs-rancheros.onrender.com";   
         let miNombre = "";
         let miSala = "";
         let intervaloActualizacion;
@@ -572,19 +572,37 @@ else if (miRol === "narrador") {
         }
 
         // Para volver Al cargar la página, revisamos si ya había una sesión activa
-        window.onload = function() {
+        window.onload = async function() {
             const nombreGuardado = localStorage.getItem("lobo_nombre");
             const salaGuardada = localStorage.getItem("lobo_sala");
-            
-            // CORRECCIÓN: Definimos la variable antes de usarla
             const eraNarrador = localStorage.getItem("es_narrador") === "true";
 
             if (nombreGuardado && salaGuardada) {
                 miNombre = nombreGuardado;
                 miSala = salaGuardada;
-                
-                // Ahora sí, entrarAlLobby recibe el valor correcto
-                entrarAlLobby(eraNarrador);
+
+                // Si es narrador no necesita unirse, ya está en la sala
+                if (eraNarrador) {
+                    entrarAlLobby(true);
+                    return;
+                }
+
+                // Si es jugador, intentamos reconectarnos via el endpoint
+                const respuesta = await fetch(`${API_URL}/unirse-sala`, {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({ 
+                        nombre_jugador: miNombre, 
+                        codigo_sala: miSala 
+                    })
+                });
+
+                if (respuesta.ok) {
+                    entrarAlLobby(false);
+                } else {
+                    // Si falla limpiamos y dejamos al usuario en el login
+                    localStorage.clear();
+                }
             }
         };
 
