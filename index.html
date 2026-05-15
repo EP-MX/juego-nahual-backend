@@ -567,14 +567,15 @@ else if (miRol === "narrador") {
         window.onload = function() {
             const nombreGuardado = localStorage.getItem("lobo_nombre");
             const salaGuardada = localStorage.getItem("lobo_sala");
-            // Recuperamos si era narrador (convertimos el texto "true" a booleano real)
+            
+            // CORRECCIÓN: Definimos la variable antes de usarla
             const eraNarrador = localStorage.getItem("es_narrador") === "true";
 
             if (nombreGuardado && salaGuardada) {
                 miNombre = nombreGuardado;
                 miSala = salaGuardada;
                 
-                // Ahora sí, eraNarrador existe y entrarAlLobby sabe qué mostrar
+                // Ahora sí, entrarAlLobby recibe el valor correcto
                 entrarAlLobby(eraNarrador);
             }
         };
