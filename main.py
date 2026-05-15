@@ -110,6 +110,7 @@ async def estado_servidor():
 
 @app.post("/crear-sala")
 async def crear_sala(datos: CrearSalaRequest):
+    await db.partidas.delete_many({})
     codigo = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
 
     nueva_partida = {
@@ -117,7 +118,8 @@ async def crear_sala(datos: CrearSalaRequest):
         "estado": "esperando_jugadores",
         "jugadores": [
             {"nombre": datos.nombre_narrador, "rol": "narrador", "vivo": True}
-        ]
+        ],
+        "ciclo": 1 # Iniciamos el contador de días aquí por seguridad
     }
     
    
@@ -136,9 +138,15 @@ async def unirse_sala(datos: UnirseSalaRequest):
     if sala["estado"] != "esperando_jugadores":
         raise HTTPException(status_code=400, detail="La partida ya comenzó o está cerrada.")
 
+    # En main.py -> @app.post("/unirse-sala")
     nombre_existe = any(j["nombre"].lower() == datos.nombre_jugador.lower() for j in sala["jugadores"])
+
     if nombre_existe:
-        raise HTTPException(status_code=400, detail="Ese nombre ya está en uso en esta sala.")
+        if sala["estado"] == "esperando_jugadores":
+            raise HTTPException(status_code=400, detail="Ese nombre ya está en uso.")
+    else:
+        # Si la partida ya inició, permitimos "reentrar"
+        return {"mensaje": f"Reconectando a {datos.nombre_jugador}..."}
     
     # 2. datos del nuevo jugador
     nuevo_jugador = {
@@ -628,7 +636,7 @@ async def votar_dia(datos: AccionVotoDiaRequest):
     muertos_por_linchamiento = set()
     estado_siguiente = calcular_siguiente_turno(jugadores, "dia") # <-- CAMBIADA
 
-    if not hubo_empate:
+    if not hubo_empate and nombre_linchado != "abstencion":
         muertos_por_linchamiento.add(nombre_linchado)
         
         #El suicidio de Cupido 
@@ -638,8 +646,7 @@ async def votar_dia(datos: AccionVotoDiaRequest):
                 if j.get("enamorado") and j["nombre"] != nombre_linchado:
                     muertos_por_linchamiento.add(j["nombre"])
 
-        # El Cazador aun no se aplica
-        # Si entre los que van a morir está el Cazador el juego se pausa y pasa a su turno
+        # El Cazador 
         for nombre in muertos_por_linchamiento:
             jug_temp = next(j for j in jugadores if j["nombre"] == nombre)
             if jug_temp["rol"] == "Cazador":
@@ -650,7 +657,7 @@ async def votar_dia(datos: AccionVotoDiaRequest):
         for j in jugadores:
             if j["nombre"] in muertos_por_linchamiento:
                 j["vivo"] = False
-                j["ciclo_muerte"] = ciclo_actual
+                j["ciclo_muerte"] = sala.get("ciclo", 1)
 
     # VICTORIA
    
@@ -679,7 +686,7 @@ async def votar_dia(datos: AccionVotoDiaRequest):
 
     mensaje_final = "El pueblo ha hablado. "
     if hubo_empate:
-        mensaje_final += "Hubo un empate en la votación. Nadie es linchado hoy."
+        mensaje_final += "Nadie es linchado hoy."
     else:
         if estado_siguiente == "victoria_aldeanos":
             mensaje_final += "¡Los aldeanos han acabado con el último Lobo!"

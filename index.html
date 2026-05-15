@@ -11,6 +11,8 @@
 </head>
 <body>
 
+
+    <button onclick="salirDePartida()" style="float: right; background: red; color: white;">Cerrar Sesión</button>
     <h1>Rancheros vs Nahuales - Pruebas</h1>
 
     <!-- PANTALLA 1: LOGIN -->
@@ -40,14 +42,14 @@
     </div>
 
     <script>
-        //const API_URL = "http://127.0.0.1:8000";
-        const API_URL = "https://nahuales-vs-rancheros.onrender.com";   
+        const API_URL = "http://127.0.0.1:8000";
+        //const API_URL = "https://nahuales-vs-rancheros.onrender.com";   
         let miNombre = "";
         let miSala = "";
         let intervaloActualizacion;
         let pollingPausado = false;
 
-        // Función 1: Crear Sala
+       // Función 1: Crear Sala
         async function crearSala() {
             miNombre = document.getElementById("input-nombre").value;
             if (!miNombre) return alert("Pon un nombre");
@@ -57,10 +59,18 @@
                 headers: {"Content-Type": "application/json"},
                 body: JSON.stringify({ nombre_narrador: miNombre })
             });
-            const datos = await respuesta.json();
             
-            miSala = datos.codigo;
-            entrarAlLobby(true);
+            if (respuesta.ok) {
+                const datos = await respuesta.json();
+                miSala = datos.codigo;
+                
+                // Guardamos solo si la respuesta fue exitosa
+                localStorage.setItem("lobo_nombre", miNombre);
+                localStorage.setItem("lobo_sala", miSala);
+                localStorage.setItem("es_narrador", "true"); // Tip: Guarda si es narrador para la reconexión
+
+                entrarAlLobby(true);
+            }
         }
 
         // Función 2: Unirse a Sala
@@ -76,6 +86,11 @@
             });
 
             if (respuesta.ok) {
+                // MOVIDO AQUÍ ADENTRO: Solo guardamos si el servidor aceptó al jugador
+                localStorage.setItem("lobo_nombre", miNombre);
+                localStorage.setItem("lobo_sala", miSala);
+                localStorage.setItem("es_narrador", "false");
+
                 entrarAlLobby(false);
             } else {
                 const error = await respuesta.json();
@@ -83,21 +98,28 @@
             }
         }
 
-        // Función 3: Cambiar de pantalla y empezar a leer la sala
         function entrarAlLobby(esNarrador) {
             document.getElementById("pantalla-login").style.display = "none";
             document.getElementById("pantalla-lobby").style.display = "block";
             document.getElementById("display-codigo").innerText = miSala;
             
+            // Mantenemos tu lógica original:
             if (esNarrador) {
                 document.getElementById("btn-iniciar").style.display = "block";
                 document.getElementById("display-rol").innerText = "NARRADOR";
+            } else {
+                // Por seguridad, si no es narrador, ocultamos el botón de inicio
+                document.getElementById("btn-iniciar").style.display = "none";
             }
 
             actualizarSala();
+
+            // Limpiamos cualquier intervalo previo por si acaso para evitar lentitud
+            if (intervaloActualizacion) clearInterval(intervaloActualizacion);
+            
+            // Iniciamos el ciclo de actualización
             intervaloActualizacion = setInterval(actualizarSala, 2000);
         }
-
             let enamoradosElegidos = [];
 
         function seleccionarEnamorado(nombre) {
@@ -221,9 +243,16 @@
         async function actualizarSala() {
             if (pollingPausado) return;
             const respuesta = await fetch(`${API_URL}/sala/${miSala}`);
-            const sala = await respuesta.json();
 
-            // 1. jugadores y si están vivos/muertos
+            if (respuesta.status === 404) {
+                if (intervaloActualizacion) clearInterval(intervaloActualizacion);
+                localStorage.clear(); // Borramos su huella del navegador
+                alert("La partida ha sido reiniciada o finalizada. Volviendo al menú principal.");
+                location.reload(); // Recargamos la página al inicio
+                return;
+            }
+
+            const sala = await respuesta.json();
             const ul = document.getElementById("lista-jugadores");
             ul.innerHTML = ""; 
             let miRol = "narrador";
@@ -387,13 +416,19 @@
                 }
                 const jugadoresVivos = sala.jugadores.filter(j => j.vivo && j.rol !== 'narrador');
 
+                // En la sección else if (sala.estado === "dia" && miRol !== "narrador")
                 if (yoVote) {
-                    controlesHTML += `<p style="color:#00ff00">Votaste por <strong>${yoVote.acusado}</strong>.</p>`;
+                    controlesHTML += `<p style="color:#00ff00">Votaste por <strong>${yoVote.acusado === 'abstencion' ? 'Abstenerse' : yoVote.acusado}</strong>.</p>`;
                 } else {
                     controlesHTML += `<p>¿A quién quieren linchar?</p>`;
+                    
+                    // Botones para votar a jugadores
                     sala.jugadores.filter(j => j.vivo && j.rol !== 'narrador' && j.nombre !== miNombre).forEach(j => {
                         controlesHTML += `<button onclick="votarDia('${j.nombre}')">Votar por ${j.nombre}</button> `;
                     });
+
+                    // --- NUEVO BOTÓN DE ABSTENCIÓN ---
+                    controlesHTML += `<br><button onclick="votarDia('abstencion')" style="background-color: #555; color: white;"> No votar </button>`;
                 }
 
                 // Conteo de votos en tiempo real
@@ -414,7 +449,7 @@
             }
             // FIN DEL JUEGO 
             else if (sala.estado === "victoria_lobos" || sala.estado === "victoria_aldeanos") {
-                const ganador = sala.estado === "victoria_lobos" ? "LOS LOBOS 🐺" : "LOS ALDEANOS 👨‍🌾";
+                const ganador = sala.estado === "victoria_lobos" ? "LOS LOBOS " : "LOS ALDEANOS ";
                 controlesHTML += `<h2 style="color: gold;">¡JUEGO TERMINADO!</h2>
                                 <h3>Ganadores: ${ganador}</h3>
                                 <button onclick="location.reload()">Jugar otra vez</button>`;
@@ -424,7 +459,13 @@ else if (miRol === "narrador") {
     if (sala.estado === "esperando_jugadores") {
         controlesHTML += `<p>Esperando jugadores... cuando estén todos presiona EMPEZAR JUEGO.</p>`;
     } else {
-        controlesHTML += `<p style="color:yellow">--- PANEL DEL NARRADOR ---</p>`;
+
+        const diaActual = sala.ciclo || 1;
+        controlesHTML += `<p style="color:#00ff00; font-size: 1.2em; border-bottom: 1px solid #00ff00; padding-bottom: 5px;">
+            Noches en el rancho: ${diaActual}
+        </p>`;
+
+        //controlesHTML += `<p style="color:yellow">--- PANEL DEL NARRADOR ---</p>`;
 
         // Info de enamorados (solo si ya hay alguno)
         const enamorados = sala.jugadores.filter(j => j.enamorado);
@@ -521,6 +562,30 @@ else if (miRol === "narrador") {
                 body: JSON.stringify({ codigo_sala: miSala })
             });
         }
+
+        // Para volver Al cargar la página, revisamos si ya había una sesión activa
+        window.onload = function() {
+            const nombreGuardado = localStorage.getItem("lobo_nombre");
+            const salaGuardada = localStorage.getItem("lobo_sala");
+            // Recuperamos si era narrador (convertimos el texto "true" a booleano real)
+            const eraNarrador = localStorage.getItem("es_narrador") === "true";
+
+            if (nombreGuardado && salaGuardada) {
+                miNombre = nombreGuardado;
+                miSala = salaGuardada;
+                
+                // Ahora sí, eraNarrador existe y entrarAlLobby sabe qué mostrar
+                entrarAlLobby(eraNarrador);
+            }
+        };
+
+        function salirDePartida() {
+        if(confirm("¿Seguro que quieres salir? no podraa regresar al juego actual.")) {
+            localStorage.clear(); // Limpia la memoria
+            location.reload();    // Recarga al login
+        }
+}
+
     </script>
 </body>
 </html>
