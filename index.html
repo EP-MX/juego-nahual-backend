@@ -76,7 +76,7 @@
         // Función 2: Unirse a Sala
         async function unirseSala() {
             miNombre = document.getElementById("input-nombre").value;
-            miSala = document.getElementById("input-codigo").value.toUpperCase();
+            miSala = document.getElementById("input-codigo").value.trim().toUpperCase();
             if (!miNombre || !miSala) return alert("Faltan datos");
 
             const respuesta = await fetch(`${API_URL}/unirse-sala`, {
@@ -242,7 +242,15 @@
 
         async function actualizarSala() {
             if (pollingPausado) return;
-            const respuesta = await fetch(`${API_URL}/sala/${miSala}`);
+            // Agregamos un timestamp y la regla no-store para obligar a descargar los datos frescos
+            const tiempo = new Date().getTime();
+            const respuesta = await fetch(`${API_URL}/sala/${miSala}?t=${tiempo}`, { 
+                cache: "no-store",
+                headers: {
+                    'Pragma': 'no-cache',
+                    'Cache-Control': 'no-cache'
+                }
+            });
 
             if (respuesta.status === 404) {
                 if (intervaloActualizacion) clearInterval(intervaloActualizacion);
