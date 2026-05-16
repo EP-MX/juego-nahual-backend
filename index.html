@@ -578,30 +578,41 @@ else if (miRol === "narrador") {
             const eraNarrador = localStorage.getItem("es_narrador") === "true";
 
             if (nombreGuardado && salaGuardada) {
+                // 1. Verificamos si la sala sigue existiendo en el servidor
+                const verificacion = await fetch(`${API_URL}/sala/${salaGuardada}`);
+                
+                if (!verificacion.ok) {
+                    localStorage.clear();
+                    return;
+                }
+
+                const sala = await verificacion.json();
+
+                // 2. Si la partida ya terminó, limpiamos la memoria
+                if (sala.estado === "victoria_lobos" || sala.estado === "victoria_aldeanos") {
+                    localStorage.clear();
+                    return;
+                }
+
                 miNombre = nombreGuardado;
                 miSala = salaGuardada;
 
-                // Si es narrador no necesita unirse, ya está en la sala
+                // 3. Si es narrador, entra directo
                 if (eraNarrador) {
                     entrarAlLobby(true);
                     return;
                 }
 
-                // Si es jugador, intentamos reconectarnos via el endpoint
-                const respuesta = await fetch(`${API_URL}/unirse-sala`, {
-                    method: "POST",
-                    headers: {"Content-Type": "application/json"},
-                    body: JSON.stringify({ 
-                        nombre_jugador: miNombre, 
-                        codigo_sala: miSala 
-                    })
-                });
+                // 4. Si es jugador, revisamos si ya está dentro de la base de datos
+                const estoyEnLaSala = sala.jugadores.some(j => j.nombre.toLowerCase() === miNombre.toLowerCase());
 
-                if (respuesta.ok) {
+                if (estoyEnLaSala) {
+                    // Ya estás registrado, entras directo
                     entrarAlLobby(false);
                 } else {
-                    // Si falla limpiamos y dejamos al usuario en el login
+                    // Si por alguna razón no estás en la lista, te borra la memoria vieja
                     localStorage.clear();
+                    location.reload();
                 }
             }
         };
