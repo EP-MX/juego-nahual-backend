@@ -18,13 +18,18 @@
     <!-- PANTALLA 1: LOGIN -->
     <div id="pantalla-login" class="pantalla">
         <h3>Identificación</h3>
-        <input type="text" id="input-nombre" placeholder="Ingresa tu apodo">
-        <hr>
-        <button onclick="crearSala()">Crear Sala (Ser Narrador)</button>
+        
+        <input type="text" id="input-nombre" placeholder="Ingresa tu nombre">
         <br><br>
         <input type="text" id="input-codigo" placeholder="Código VR80" maxlength="4">
         <button onclick="unirseSala()">Unirse a Sala</button>
         <p id="mensaje-error" style="color: red;"></p>
+
+        <br><br>
+        <hr>
+        
+        <p>¿Quieres hacer una sala?</p>
+        <button onclick="crearSala()">Crear Sala (Ser Narrador)</button>
     </div>
 
     <!-- PANTALLA 2: LOBBY -->
