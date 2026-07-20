@@ -13,7 +13,7 @@
 
 
     <button onclick="salirDePartida()" style="float: right; background: red; color: white;">Cerrar Sesión</button>
-    <h1>Rancheros vs Nahuales - Pruebas</h1>
+    <h1>Rancheros vs Nahuales</h1>
 
     <!-- PANTALLA 1: LOGIN -->
     <div id="pantalla-login" class="pantalla">
@@ -44,64 +44,81 @@
         <button id="btn-iniciar" onclick="iniciarPartida()" style="display: none; background-color: white; color: black;">
             EMPEZAR JUEGO
         </button>
+        <div id="seleccion-roles" style="display:none; margin-top:15px; border-top:1px solid #00ff00; padding-top:10px;">
+    <p>Roles especiales a incluir:</p>
+    <label><input type="checkbox" class="rol-especial" value="Vidente" checked> Vidente</label><br>
+    <label><input type="checkbox" class="rol-especial" value="Bruja" checked> Bruja</label><br>
+    <label><input type="checkbox" class="rol-especial" value="Cupido" checked> Cupido</label><br>
+    <label><input type="checkbox" class="rol-especial" value="Cazador" checked> Cazador</label><br>
+    <label><input type="checkbox" class="rol-especial" value="Niña" checked> Niña</label><br>
+</div>
     </div>
 
-    <script>
-        //const API_URL = "http://127.0.0.1:8000";
-        const API_URL = "https://nahuales-vs-rancheros.onrender.com";   
+    <script>3//PARA LANZAR LOCALMENTE ES CON LA IP , PARA PONERLO ONLINE ES EL LINK
+        const API_URL = "http://127.0.0.1:8000";
+        //const API_URL = "https://nahuales-vs-rancheros.onrender.com";   
         let miNombre = "";
         let miSala = "";
+        let miToken = "";
         let intervaloActualizacion;
         let pollingPausado = false;
 
        // Función 1: Crear Sala
         async function crearSala() {
-            miNombre = document.getElementById("input-nombre").value;
-            if (!miNombre) return alert("Pon un nombre");
+    miNombre = document.getElementById("input-nombre").value;
+    if (!miNombre) return alert("Pon un nombre");
 
-            const respuesta = await fetch(`${API_URL}/crear-sala`, {
-                method: "POST",
-                headers: {"Content-Type": "application/json"},
-                body: JSON.stringify({ nombre_narrador: miNombre })
-            });
-            
-            if (respuesta.ok) {
-                const datos = await respuesta.json();
-                miSala = datos.codigo;
-                
-                // Guardamos solo si la respuesta fue exitosa
-                localStorage.setItem("lobo_nombre", miNombre);
-                localStorage.setItem("lobo_sala", miSala);
-                localStorage.setItem("es_narrador", "true"); // Tip: Guarda si es narrador para la reconexión
+    const respuesta = await fetch(`${API_URL}/crear-sala`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ nombre_narrador: miNombre })
+    });
+    
+    if (respuesta.ok) {
+        const datos = await respuesta.json();
+        miSala = datos.codigo;
+        miToken = datos.token;
+        
+        localStorage.setItem("lobo_nombre", miNombre);
+        localStorage.setItem("lobo_sala", miSala);
+        localStorage.setItem("lobo_token", miToken);
+        localStorage.setItem("es_narrador", "true");
 
-                entrarAlLobby(true);
-            }
-        }
+        entrarAlLobby(true);
+    }
+}
 
         // Función 2: Unirse a Sala
         async function unirseSala() {
-            miNombre = document.getElementById("input-nombre").value;
-            miSala = document.getElementById("input-codigo").value.trim().toUpperCase();
-            if (!miNombre || !miSala) return alert("Faltan datos");
+    miNombre = document.getElementById("input-nombre").value;
+    miSala = document.getElementById("input-codigo").value.trim().toUpperCase();
+    if (!miNombre || !miSala) return alert("Faltan datos");
 
-            const respuesta = await fetch(`${API_URL}/unirse-sala`, {
-                method: "POST",
-                headers: {"Content-Type": "application/json"},
-                body: JSON.stringify({ nombre_jugador: miNombre, codigo_sala: miSala })
-            });
+    const respuesta = await fetch(`${API_URL}/unirse-sala`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ 
+            nombre_jugador: miNombre, 
+            codigo_sala: miSala,
+            token: localStorage.getItem("lobo_token") || null
+        })
+    });
 
-            if (respuesta.ok) {
-                // MOVIDO AQUÍ ADENTRO: Solo guardamos si el servidor aceptó al jugador
-                localStorage.setItem("lobo_nombre", miNombre);
-                localStorage.setItem("lobo_sala", miSala);
-                localStorage.setItem("es_narrador", "false");
+    if (respuesta.ok) {
+        const datos = await respuesta.json();
+        miToken = datos.token;
 
-                entrarAlLobby(false);
-            } else {
-                const error = await respuesta.json();
-                document.getElementById("mensaje-error").innerText = error.detail;
-            }
-        }
+        localStorage.setItem("lobo_nombre", miNombre);
+        localStorage.setItem("lobo_sala", miSala);
+        localStorage.setItem("lobo_token", miToken);
+        localStorage.setItem("es_narrador", "false");
+
+        entrarAlLobby(false);
+    } else {
+        const error = await respuesta.json();
+        document.getElementById("mensaje-error").innerText = error.detail;
+    }
+}
 
         function entrarAlLobby(esNarrador) {
             document.getElementById("pantalla-login").style.display = "none";
@@ -110,19 +127,18 @@
             
             // Mantenemos tu lógica original:
             if (esNarrador) {
-                document.getElementById("btn-iniciar").style.display = "block";
-                document.getElementById("display-rol").innerText = "NARRADOR";
-            } else {
-                // Por seguridad, si no es narrador, ocultamos el botón de inicio
-                document.getElementById("btn-iniciar").style.display = "none";
-            }
+        document.getElementById("btn-iniciar").style.display = "block";
+        document.getElementById("seleccion-roles").style.display = "block";
+        document.getElementById("display-rol").innerText = "NARRADOR";
+    } else {
+        document.getElementById("btn-iniciar").style.display = "none";
+        document.getElementById("seleccion-roles").style.display = "none";
+    }
 
             actualizarSala();
 
-            // Limpiamos cualquier intervalo previo por si acaso para evitar lentitud
             if (intervaloActualizacion) clearInterval(intervaloActualizacion);
             
-            // Iniciamos el ciclo de actualización
             intervaloActualizacion = setInterval(actualizarSala, 2000);
         }
             let enamoradosElegidos = [];
@@ -138,116 +154,82 @@
         }
 
         async function usarCazador(nombreObjetivo) {
-        await fetch(`${API_URL}/accion/cazador`, {
-            method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({
-                codigo_sala: miSala,
-                nombre_cazador: miNombre,
-                nombre_objetivo: nombreObjetivo
-                })
-            });
-        }
-
-        async function enviarCupido() {
-            await fetch(`${API_URL}/accion/cupido`, {
-                method: "POST",
-                headers: {"Content-Type": "application/json"},
-                body: JSON.stringify({
-                    codigo_sala: miSala,
-                    nombre_cupido: miNombre,
-                    enamorado_1: enamoradosElegidos[0],
-                    enamorado_2: enamoradosElegidos[1]
-                })
-            });
-            enamoradosElegidos = []; 
-            pollingPausado = false; 
-        }
-
-        async function votarLobo(nombreVictima) {
-            await fetch(`${API_URL}/accion/lobos`, {
-                method: "POST",
-                headers: {"Content-Type": "application/json"},
-                body: JSON.stringify({
-                    codigo_sala: miSala,
-                    nombre_lobo: miNombre,
-                    nombre_objetivo: nombreVictima
-        })
+    await fetch(`${API_URL}/accion/cazador`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ codigo_sala: miSala, nombre_cazador: miNombre, nombre_objetivo: nombreObjetivo, token: miToken })
     });
 }
 
-        async function votarDia(nombreAcusado) {
-            await fetch(`${API_URL}/accion/votar-dia`, {
-                method: "POST",
-                headers: {"Content-Type": "application/json"},
-                body: JSON.stringify({
-                    codigo_sala: miSala,
-                    nombre_votante: miNombre,
-                    nombre_acusado: nombreAcusado
-                })
-            });
-        }
+async function enviarCupido() {
+    await fetch(`${API_URL}/accion/cupido`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ codigo_sala: miSala, nombre_cupido: miNombre, enamorado_1: enamoradosElegidos[0], enamorado_2: enamoradosElegidos[1], token: miToken })
+    });
+    enamoradosElegidos = []; 
+    pollingPausado = false; 
+}
 
-        async function usarVidente(nombreObjetivo) {
-            const respuesta = await fetch(`${API_URL}/accion/vidente`, {
-                method: "POST",
-                headers: {"Content-Type": "application/json"},
-                body: JSON.stringify({
-                    codigo_sala: miSala,
-                    nombre_vidente: miNombre,
-                    nombre_objetivo: nombreObjetivo
-                })
-            });
-    
-            if (respuesta.ok) {
-                const resultado = await respuesta.json();
-                alert(`Tu bola de cristal muestra que... ${nombreObjetivo} es ${resultado.rol_descubierto}`);
-            } else {
-                const error = await respuesta.json();
-                alert("Error: " + error.detail);
-            }
-        }
+async function votarLobo(nombreVictima) {
+    await fetch(`${API_URL}/accion/lobos`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ codigo_sala: miSala, nombre_lobo: miNombre, nombre_objetivo: nombreVictima, token: miToken })
+    });
+}
 
-        async function anunciarDia() {
-            await fetch(`${API_URL}/narrador/avanzar`, {
-                method: "POST",
-                headers: {"Content-Type": "application/json"},
-                body: JSON.stringify({
-                    codigo_sala: miSala,
-                    nombre_narrador: miNombre
-                })
-            });
-        }
+async function votarDia(nombreAcusado) {
+    await fetch(`${API_URL}/accion/votar-dia`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ codigo_sala: miSala, nombre_votante: miNombre, nombre_acusado: nombreAcusado, token: miToken })
+    });
+}
 
-        async function anunciarNoche() {
-            await fetch(`${API_URL}/narrador/avanzar`, {
-                method: "POST",
-                headers: {"Content-Type": "application/json"},
-                body: JSON.stringify({
-                    codigo_sala: miSala,
-                    nombre_narrador: miNombre
-                })
-            });
-        }
+async function usarVidente(nombreObjetivo) {
+    const respuesta = await fetch(`${API_URL}/accion/vidente`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ codigo_sala: miSala, nombre_vidente: miNombre, nombre_objetivo: nombreObjetivo, token: miToken })
+    });
+    if (respuesta.ok) {
+        const resultado = await respuesta.json();
+        alert(`Tu bola de cristal muestra que... ${nombreObjetivo} es ${resultado.rol_descubierto}`);
+    } else {
+        const error = await respuesta.json();
+        alert("Error: " + error.detail);
+    }
+}
 
-        async function usarBruja(salvar, objetivoMuerte) {
-            await fetch(`${API_URL}/accion/bruja`, {
-                method: "POST",
-                headers: {"Content-Type": "application/json"},
-                body: JSON.stringify({
-                    codigo_sala: miSala,
-                    nombre_bruja: miNombre,
-                    usar_pocion_vida: salvar,
-                    objetivo_pocion_muerte: objetivoMuerte
-                })
-            });
-        }
+async function anunciarDia() {
+    await fetch(`${API_URL}/narrador/avanzar`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ codigo_sala: miSala, nombre_narrador: miNombre, token: miToken })
+    });
+}
+
+async function anunciarNoche() {
+    await fetch(`${API_URL}/narrador/avanzar`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ codigo_sala: miSala, nombre_narrador: miNombre, token: miToken })
+    });
+}
+
+async function usarBruja(salvar, objetivoMuerte) {
+    await fetch(`${API_URL}/accion/bruja`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ codigo_sala: miSala, nombre_bruja: miNombre, usar_pocion_vida: salvar, objetivo_pocion_muerte: objetivoMuerte, token: miToken })
+    });
+}
         //let ultimoEstadoConocido = ""; 
         // Función 4: Obtener datos de la sala en tiempo real
 
         async function actualizarSala() {
             if (pollingPausado) return;
-            // Agregamos un timestamp y la regla no-store para obligar a descargar los datos frescos
             const tiempo = new Date().getTime();
             const respuesta = await fetch(`${API_URL}/sala/${miSala}?t=${tiempo}`, { 
                 cache: "no-store",
@@ -272,8 +254,7 @@
             let estoyVivo = true;
 
             const cicloCurrent = sala.ciclo || 1;
-            const estadosNocturnosOcultos = ["turno_cupido", "turno_vidente", "turno_lobos", "turno_bruja", "confirmando_lobos", "esperando_narrador_dia"];
-
+            const estadosNocturnosOcultos = ["turno_cupido", "turno_vidente", "turno_lobos", "turno_bruja", "confirmando_lobos", "esperando_narrador_dia", "turno_cazador"];
             sala.jugadores.forEach(jugador => {
                 const li = document.createElement("li");
                 const muertoEsteCiclo = jugador.ciclo_muerte === cicloCurrent;
@@ -304,6 +285,8 @@
             // 2. Control del botón de inicio (solo Narrador)
             if(sala.estado !== "esperando_jugadores") {
                 document.getElementById("btn-iniciar").style.display = "none";
+                const selRoles = document.getElementById("seleccion-roles");
+                if (selRoles) selRoles.style.display = "none";
             }
 
             // 3. MÁQUINA DE ESTADOS VISUAL (Lo que se ve en depende del turno)
@@ -569,61 +552,65 @@ else if (miRol === "narrador") {
 
         // Función 5: Iniciar Juego (Solo Narrador)
         async function iniciarPartida() {
-            await fetch(`${API_URL}/iniciar-juego`, {
+            const rolesSeleccionados = Array.from(document.querySelectorAll(".rol-especial:checked")).map(cb => cb.value);
+
+            const respuesta = await fetch(`${API_URL}/iniciar-juego`, {
                 method: "POST",
                 headers: {"Content-Type": "application/json"},
-                body: JSON.stringify({ codigo_sala: miSala })
+                body: JSON.stringify({
+                    codigo_sala: miSala,
+                    nombre_narrador: miNombre,
+                    token: miToken,
+                    roles_seleccionados: rolesSeleccionados
+                })
             });
+
+            if (!respuesta.ok) {
+                const error = await respuesta.json();
+                alert("No se pudo iniciar: " + error.detail);
+            }
         }
 
         // Para volver Al cargar la página, revisamos si ya había una sesión activa
         window.onload = async function() {
-            const nombreGuardado = localStorage.getItem("lobo_nombre");
-            const salaGuardada = localStorage.getItem("lobo_sala");
-            const eraNarrador = localStorage.getItem("es_narrador") === "true";
+    const nombreGuardado = localStorage.getItem("lobo_nombre");
+    const salaGuardada = localStorage.getItem("lobo_sala");
+    const tokenGuardado = localStorage.getItem("lobo_token");
+    const eraNarrador = localStorage.getItem("es_narrador") === "true";
 
-            if (nombreGuardado && salaGuardada) {
-                // 1. Verificamos si la sala sigue existiendo en el servidor
-                const verificacion = await fetch(`${API_URL}/sala/${salaGuardada}`);
-                
-                if (!verificacion.ok) {
-                    localStorage.clear();
-                    return;
-                }
+    if (nombreGuardado && salaGuardada && tokenGuardado) {
+        const verificacion = await fetch(`${API_URL}/sala/${salaGuardada}`);
+        if (!verificacion.ok) {
+            localStorage.clear();
+            return;
+        }
+        const sala = await verificacion.json();
+        if (sala.estado === "victoria_lobos" || sala.estado === "victoria_aldeanos") {
+            localStorage.clear();
+            return;
+        }
 
-                const sala = await verificacion.json();
+        miNombre = nombreGuardado;
+        miSala = salaGuardada;
+        miToken = tokenGuardado;
 
-                // 2. Si la partida ya terminó, limpiamos la memoria
-                if (sala.estado === "victoria_lobos" || sala.estado === "victoria_aldeanos") {
-                    localStorage.clear();
-                    return;
-                }
+        if (eraNarrador) {
+            entrarAlLobby(true);
+            return;
+        }
 
-                miNombre = nombreGuardado;
-                miSala = salaGuardada;
-
-                // 3. Si es narrador, entra directo
-                if (eraNarrador) {
-                    entrarAlLobby(true);
-                    return;
-                }
-
-                // 4. Si es jugador, revisamos si ya está dentro de la base de datos
-                const estoyEnLaSala = sala.jugadores.some(j => j.nombre.toLowerCase() === miNombre.toLowerCase());
-
-                if (estoyEnLaSala) {
-                    // Ya estás registrado, entras directo
-                    entrarAlLobby(false);
-                } else {
-                    // Si por alguna razón no estás en la lista, te borra la memoria vieja
-                    localStorage.clear();
-                    location.reload();
-                }
-            }
-        };
+        const estoyEnLaSala = sala.jugadores.some(j => j.nombre.toLowerCase() === miNombre.toLowerCase());
+        if (estoyEnLaSala) {
+            entrarAlLobby(false);
+        } else {
+            localStorage.clear();
+            location.reload();
+        }
+    }
+};
 
         function salirDePartida() {
-        if(confirm("¿Seguro que quieres salir? no podraa regresar al juego actual.")) {
+        if(confirm("¿Seguro que quieres salir? no puedes regresar al juego actual.")) {
             localStorage.clear(); // Limpia la memoria
             location.reload();    // Recarga al login
         }

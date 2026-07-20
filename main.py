@@ -3,13 +3,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from random import shuffle
 from pydantic import BaseModel
-from typing import Optional 
+from typing import List, Optional
 from collections import Counter
+from pymongo import ReturnDocument
 import random
 import string
+import secrets
+
 
 # 1. Configuración de Base de Datos
-MONGO_URL = "mongodb+srv://juego_admin:QaSVs2o7Q8uHwLA8@juego.yijg6sl.mongodb.net/?appName=Juego" # <--- ¡Pega tu link aquí!
+MONGO_URL = "mongodb+srv://juego_admin:QaSVs2o7Q8uHwLA8@juego.yijg6sl.mongodb.net/?appName=Juego" 
 cliente = AsyncIOMotorClient(MONGO_URL)
 db = cliente.game_db 
 
@@ -34,42 +37,51 @@ class UnirseSalaRequest(BaseModel):
 
 class IniciarJuegoRequest(BaseModel):
     codigo_sala: str
+    nombre_narrador: str
+    token: str
+    roles_seleccionados: Optional[List[str]] = None
 
 class AccionCupidoRequest(BaseModel):
     codigo_sala: str
     nombre_cupido: str
     enamorado_1: str
     enamorado_2: str
+    token: str
 
 class AccionVidenteRequest(BaseModel):
     codigo_sala: str
     nombre_vidente: str
     nombre_objetivo: str
-
+    token: str
 class AccionLoboRequest(BaseModel):
     codigo_sala: str
     nombre_lobo: str
     nombre_objetivo: str
+    token: str
 
 class AccionBrujaRequest(BaseModel):
     codigo_sala: str
     nombre_bruja: str
     usar_pocion_vida: bool
     objetivo_pocion_muerte: Optional[str] = None
-
+    token: str
 class AccionVotoDiaRequest(BaseModel):
     codigo_sala: str
     nombre_votante: str
-    nombre_acusado: str 
+    nombre_acusado: str
+    token: str
 
 class AccionCazadorRequest(BaseModel):
     codigo_sala: str
     nombre_cazador: str
     nombre_objetivo: str
+    token: str
 
 class NarradorAvanzarRequest(BaseModel):
     codigo_sala: str
     nombre_narrador: str
+    token: str
+ROLES_ESPECIALES_VALIDOS = ["Vidente", "Bruja", "Cupido", "Cazador", "Niña"]
 
 #revisar turnos 
 def calcular_siguiente_turno(jugadores: list, turno_actual: str) -> str:
@@ -95,7 +107,27 @@ def calcular_siguiente_turno(jugadores: list, turno_actual: str) -> str:
         return flujo_noche[idx_actual + 1]
     
     return flujo_noche[0]
+
+def verificar_victoria(jugadores: list) -> Optional[str]:
+    """Devuelve 'victoria_aldeanos', 'victoria_lobos', o None si el juego debe continuar."""
+    lobos_vivos = sum(1 for j in jugadores if j["rol"] == "Hombre Lobo" and j.get("vivo", True))
+    aldeanos_vivos = sum(1 for j in jugadores if j["rol"] not in ["Hombre Lobo", "narrador"] and j.get("vivo", True))
+    if lobos_vivos == 0:
+        return "victoria_aldeanos"
+    if lobos_vivos >= aldeanos_vivos:
+        return "victoria_lobos"
+    return None
+
 # 4. Rutas (Endpoints)
+
+def verificar_jugador(jugadores: list, nombre: str, token: str) -> dict:
+    """Busca al jugador por nombre y valida que el token coincida con el que se le asignó al unirse/crear sala."""
+    jugador = next((j for j in jugadores if j["nombre"] == nombre), None)
+    if not jugador:
+        raise HTTPException(status_code=404, detail="Jugador no encontrado en la sala.")
+    if jugador.get("token") != token:
+        raise HTTPException(status_code=403, detail="Token inválido. Esta sesión no coincide con este jugador.")
+    return jugador
 
 @app.get("/sala/{codigo_sala}/votos-lobos")
 async def ver_votos_lobos(codigo_sala: str):
@@ -112,20 +144,25 @@ async def estado_servidor():
 async def crear_sala(datos: CrearSalaRequest):
     await db.partidas.delete_many({})
     codigo = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
+    token_narrador = secrets.token_hex(12)
 
     nueva_partida = {
         "codigo_sala": codigo,
         "estado": "esperando_jugadores",
         "jugadores": [
-            {"nombre": datos.nombre_narrador, "rol": "narrador", "vivo": True}
+            {"nombre": datos.nombre_narrador, "rol": "narrador", "vivo": True, "token": token_narrador}
         ],
-        "ciclo": 1 # Iniciamos el contador de días aquí por seguridad
+        "ciclo": 1
     }
     
-   
     await db.partidas.insert_one(nueva_partida)
     
-    return {"mensaje": "Sala creada con éxito", "codigo": codigo}
+    return {"mensaje": "Sala creada con éxito", "codigo": codigo, "token": token_narrador}
+
+class UnirseSalaRequest(BaseModel):
+    nombre_jugador: str
+    codigo_sala: str
+    token: Optional[str] = None  # solo se manda al intentar reconectar
 
 @app.post("/unirse-sala")
 async def unirse_sala(datos: UnirseSalaRequest):
@@ -134,23 +171,25 @@ async def unirse_sala(datos: UnirseSalaRequest):
     if not sala:
         raise HTTPException(status_code=404, detail="Sala no encontrada. Verifica el código.")
 
-    nombre_existe = any(j["nombre"].lower() == datos.nombre_jugador.lower() for j in sala["jugadores"])
+    jugador_existente = next((j for j in sala["jugadores"] if j["nombre"].lower() == datos.nombre_jugador.lower()), None)
 
-    if nombre_existe:
+    if jugador_existente:
         if sala["estado"] == "esperando_jugadores":
             raise HTTPException(status_code=400, detail="Ese nombre ya está en uso.")
-        else:
-            # Si la partida ya inició, permitimos reconectar
-            return {"mensaje": f"Reconectando a {datos.nombre_jugador}..."}
+        # La partida ya inició: solo se permite "reconectar" con el token correcto
+        if not datos.token or datos.token != jugador_existente.get("token"):
+            raise HTTPException(status_code=403, detail="Ese nombre ya pertenece a otro jugador en esta partida.")
+        return {"mensaje": f"Reconectando a {datos.nombre_jugador}...", "token": jugador_existente["token"]}
 
     if sala["estado"] != "esperando_jugadores":
         raise HTTPException(status_code=400, detail="La partida ya comenzó o está cerrada.")
 
-    # 2. datos del nuevo jugador
+    nuevo_token = secrets.token_hex(12)
     nuevo_jugador = {
         "nombre": datos.nombre_jugador, 
         "rol": "por_asignar", 
-        "vivo": True
+        "vivo": True,
+        "token": nuevo_token
     }
     
     await db.partidas.update_one(
@@ -158,7 +197,8 @@ async def unirse_sala(datos: UnirseSalaRequest):
         {"$push": {"jugadores": nuevo_jugador}}
     )
     
-    return {"mensaje": f"¡{datos.nombre_jugador} se ha unido a la sala {datos.codigo_sala}!"}
+    return {"mensaje": f"¡{datos.nombre_jugador} se ha unido a la sala {datos.codigo_sala}!", "token": nuevo_token}
+
 @app.get("/sala/{codigo_sala}")
 async def obtener_sala(codigo_sala: str):
     sala = await db.partidas.find_one({"codigo_sala": codigo_sala})
@@ -167,6 +207,9 @@ async def obtener_sala(codigo_sala: str):
         raise HTTPException(status_code=404, detail="Sala no encontrada.")
         
     sala["_id"] = str(sala["_id"])
+    
+    for j in sala.get("jugadores", []):
+        j.pop("token", None)
     
     return sala
 
@@ -179,11 +222,16 @@ async def iniciar_juego(datos: IniciarJuegoRequest):
     if sala["estado"] != "esperando_jugadores":
         raise HTTPException(status_code=400, detail="La partida ya comenzó.")
 
-    narrador = [j for j in sala["jugadores"] if j["rol"] == "narrador"][0]
+    narrador = verificar_jugador(sala["jugadores"], datos.nombre_narrador, datos.token)
+    if narrador["rol"] != "narrador":
+        raise HTTPException(status_code=403, detail="Solo el Narrador puede iniciar la partida.")
+
     jugadores_activos = [j for j in sala["jugadores"] if j["rol"] != "narrador"]
     num_jugadores = len(jugadores_activos)
 
-    # REGLA: De 8 a 11 jugadores = 2 Lobos. 12 o más = 3 Lobos.
+    if num_jugadores < 5:
+        raise HTTPException(status_code=400, detail="Se necesitan al menos 5 jugadores (sin contar al Narrador) para jugar.")
+
     if num_jugadores >= 12:
         num_lobos = 3
     elif num_jugadores >= 8:
@@ -191,20 +239,22 @@ async def iniciar_juego(datos: IniciarJuegoRequest):
     else:
         num_lobos = 1
 
-    # personajes especiales
-    roles_baraja = ["Vidente", "Bruja", "Cupido", "Cazador", "Niña"]
-    
-    # Agregamos los Lobos 
-    for _ in range(num_lobos):
-        roles_baraja.append("Hombre Lobo")
-        
-    # Rellenamos con Aldeanos simples
+    # Roles especiales que el Narrador decidió incluir (si no manda nada, se incluyen todos por default)
+    if datos.roles_seleccionados is not None:
+        roles_especiales = [r for r in datos.roles_seleccionados if r in ROLES_ESPECIALES_VALIDOS]
+    else:
+        roles_especiales = list(ROLES_ESPECIALES_VALIDOS)
+
+    # Los Lobos van primero y siempre entran, sin importar cuántos jugadores haya
+    roles_baraja = ["Hombre Lobo"] * num_lobos
+
+    shuffle(roles_especiales)  # si no alcanzan los espacios, que sea al azar cuáles quedan fuera
+    espacios_para_especiales = max(0, num_jugadores - num_lobos)
+    roles_baraja += roles_especiales[:espacios_para_especiales]
+
     while len(roles_baraja) < num_jugadores:
         roles_baraja.append("Aldeano")
-        
-    roles_baraja = roles_baraja[:num_jugadores]
 
-    # revolver las cartas de monse
     shuffle(roles_baraja)
 
     for i, jugador in enumerate(jugadores_activos):
@@ -219,19 +269,23 @@ async def iniciar_juego(datos: IniciarJuegoRequest):
 
     lista_final_jugadores = [narrador] + jugadores_activos
 
-  
+    # Si el Narrador excluyó a Cupido, no hay quién actúe en "turno_cupido" -> saltamos ese turno
+    hay_cupido = "Cupido" in roles_baraja
+    estado_inicial = "turno_cupido" if hay_cupido else calcular_siguiente_turno(lista_final_jugadores, "turno_cupido")
+
     await db.partidas.update_one(
         {"codigo_sala": datos.codigo_sala},
         {
             "$set": {
-                "estado": "turno_cupido",
+                "estado": estado_inicial,
                 "jugadores": lista_final_jugadores,
                 "ciclo": 1 
             }
         }
     )
 
-    return {"mensaje": "Partida iniciada. Todos cierran los ojos. Es el turno de Cupido."}
+    mensaje = "Partida iniciada. Todos cierran los ojos. Es el turno de Cupido." if hay_cupido else "Partida iniciada. Todos cierran los ojos."
+    return {"mensaje": mensaje}
 
 @app.post("/narrador/avanzar")
 async def narrador_avanzar(datos: NarradorAvanzarRequest):
@@ -239,8 +293,8 @@ async def narrador_avanzar(datos: NarradorAvanzarRequest):
     if not sala:
         raise HTTPException(status_code=404, detail="Sala no encontrada.")
 
-    narrador = next((j for j in sala["jugadores"] if j["nombre"] == datos.nombre_narrador and j["rol"] == "narrador"), None)
-    if not narrador:
+    narrador = verificar_jugador(sala["jugadores"], datos.nombre_narrador, datos.token)
+    if narrador["rol"] != "narrador":
         raise HTTPException(status_code=403, detail="No eres el Narrador.")
 
     jugadores = sala["jugadores"]
@@ -248,6 +302,15 @@ async def narrador_avanzar(datos: NarradorAvanzarRequest):
     
     # 1. Obtenemos el ciclo para saber en qué noche estamos
     ciclo_actual = sala.get("ciclo", 1)
+
+    # Si hay una victoria esperando a ser anunciada, se revela ahora en vez de seguir el flujo normal
+    victoria_pendiente = sala.get("victoria_pendiente")
+    if victoria_pendiente:
+        await db.partidas.update_one(
+            {"codigo_sala": datos.codigo_sala},
+            {"$set": {"estado": victoria_pendiente}, "$unset": {"victoria_pendiente": ""}}
+        )
+        return {"mensaje": "El juego ha terminado.", "estado_siguiente": victoria_pendiente}
 
     if estado_actual == "esperando_narrador_dia":
         # 2. Verificamos si el Cazador murió en esta misma noche
@@ -294,22 +357,14 @@ async def accion_cupido(datos: AccionCupidoRequest):
     
     if not sala:
         raise HTTPException(status_code=404, detail="Sala no encontrada.")
-        
     if sala["estado"] != "turno_cupido":
         raise HTTPException(status_code=400, detail="Calma, no es el turno de Cupido.")
 
     jugadores = sala["jugadores"]
+    cupido = verificar_jugador(jugadores, datos.nombre_cupido, datos.token)
+    if cupido["rol"] != "Cupido":
+        raise HTTPException(status_code=403, detail="No eres Cupido.")
 
-    es_cupido = False
-    for j in jugadores:
-        if j["nombre"] == datos.nombre_cupido and j["rol"] == "Cupido":
-            es_cupido = True
-            break
-            
-    if not es_cupido:
-        raise HTTPException(status_code=403, detail="¡Trampa detectada! No eres Cupido.")
-
-    
     if datos.enamorado_1 == datos.enamorado_2:
         raise HTTPException(status_code=400, detail="No puedes enamorar a la misma persona consigo misma.")
 
@@ -321,18 +376,10 @@ async def accion_cupido(datos: AccionCupidoRequest):
 
     await db.partidas.update_one(
         {"codigo_sala": datos.codigo_sala},
-        {
-            "$set": {
-                "jugadores": jugadores,
-                "estado": siguiente_turno
-            }
-        }
+        {"$set": {"jugadores": jugadores, "estado": siguiente_turno}}
     )
 
-    return {
-        "mensaje": "Tus flechas han sido lanzadas con éxito.", 
-        "estado_siguiente": siguiente_turno
-    }
+    return {"mensaje": "Tus flechas han sido lanzadas con éxito.", "estado_siguiente": siguiente_turno}
 
 
 @app.post("/accion/vidente")
@@ -345,10 +392,10 @@ async def accion_vidente(datos: AccionVidenteRequest):
         raise HTTPException(status_code=400, detail="Aún no es el turno de la Vidente.")
 
     jugadores = sala["jugadores"]
-    es_vidente = any(j["nombre"] == datos.nombre_vidente and j["rol"] == "Vidente" for j in jugadores)
-    
-    if not es_vidente:
-        raise HTTPException(status_code=403, detail="¡Trampa detectada! No eres la Vidente.")
+    vidente = verificar_jugador(jugadores, datos.nombre_vidente, datos.token)
+    if vidente["rol"] != "Vidente":
+        raise HTTPException(status_code=403, detail="No eres la Vidente.")
+
 
     # Buscamos al objetivo
     objetivo = next((j for j in jugadores if j["nombre"] == datos.nombre_objetivo), None)
@@ -394,32 +441,34 @@ async def accion_lobos(datos: AccionLoboRequest):
     if sala["estado"] != "turno_lobos":
         raise HTTPException(status_code=400, detail="Aún no es el turno de los Hombres Lobo.")
 
-    jugadores = sala["jugadores"]
-
-    es_lobo_vivo = any(
-        j["nombre"] == datos.nombre_lobo and j["rol"] == "Hombre Lobo" and j.get("vivo", True) 
-        for j in jugadores
-    )
-    if not es_lobo_vivo:
+    lobo = verificar_jugador(sala["jugadores"], datos.nombre_lobo, datos.token)
+    if lobo["rol"] != "Hombre Lobo" or not lobo.get("vivo", True):
         raise HTTPException(status_code=403, detail="No eres un Lobo o estás muerto.")
 
-    votos_actuales = sala.get("votos_lobos", [])
+    sala_actualizada = await db.partidas.find_one_and_update(
+        {
+            "codigo_sala": datos.codigo_sala,
+            "estado": "turno_lobos",
+            "votos_lobos.lobo": {"$ne": datos.nombre_lobo}
+        },
+        {"$push": {"votos_lobos": {"lobo": datos.nombre_lobo, "voto": datos.nombre_objetivo}}},
+        return_document=ReturnDocument.AFTER
+    )
 
-    if any(v["lobo"] == datos.nombre_lobo for v in votos_actuales):
-        raise HTTPException(status_code=400, detail="Ya emitiste tu voto esta noche.")
+    if sala_actualizada is None:
+        ya_voto = any(v["lobo"] == datos.nombre_lobo for v in sala.get("votos_lobos", []))
+        if ya_voto:
+            raise HTTPException(status_code=400, detail="Ya emitiste tu voto esta noche.")
+        raise HTTPException(status_code=400, detail="El turno de los lobos ya no está activo.")
 
-    votos_actuales.append({"lobo": datos.nombre_lobo, "voto": datos.nombre_objetivo})
-
+    jugadores = sala_actualizada["jugadores"]
+    votos_actuales = sala_actualizada.get("votos_lobos", [])
     lobos_vivos = [j for j in jugadores if j["rol"] == "Hombre Lobo" and j.get("vivo", True)]
     total_lobos = len(lobos_vivos)
 
     if len(votos_actuales) < total_lobos:
-        await db.partidas.update_one(
-            {"codigo_sala": datos.codigo_sala},
-            {"$set": {"votos_lobos": votos_actuales}}
-        )
         return {"mensaje": f"Voto registrado. Esperando a los demás lobos... ({len(votos_actuales)}/{total_lobos})"}
-    
+
     primer_voto = votos_actuales[0]["voto"]
     hay_unanimidad = all(v["voto"] == primer_voto for v in votos_actuales)
     victima = primer_voto if hay_unanimidad else None
@@ -437,7 +486,7 @@ async def accion_lobos(datos: AccionLoboRequest):
     )
     
     import asyncio
-    await asyncio.sleep(3)
+    await asyncio.sleep(5)
 
     hay_bruja = any(j["rol"] == "Bruja" and j.get("vivo", True) for j in jugadores)
     muertos_esta_noche = []  
@@ -458,32 +507,26 @@ async def accion_lobos(datos: AccionLoboRequest):
                 break
 
     estado_siguiente = calcular_siguiente_turno(jugadores, "turno_lobos")
+    victoria = verificar_victoria(jugadores)
 
-    lobos_vivos_count = sum(1 for j in jugadores if j["rol"] == "Hombre Lobo" and j.get("vivo", True))
-    aldeanos_vivos_count = sum(1 for j in jugadores if j["rol"] not in ["Hombre Lobo", "narrador"] and j.get("vivo", True))
-
-    if lobos_vivos_count == 0:
-        estado_siguiente = "victoria_aldeanos"
-    elif lobos_vivos_count >= aldeanos_vivos_count:
-        estado_siguiente = "victoria_lobos"
-
-    await db.partidas.update_one(
-        {"codigo_sala": datos.codigo_sala},
-        {
-            "$set": {
-                "estado": estado_siguiente,
-                "jugadores": jugadores,
-                "votos_lobos": [],
-                "reporte_muertes": muertos_esta_noche
-            }
+    update_op = {
+        "$set": {
+            "estado": estado_siguiente,
+            "jugadores": jugadores,
+            "votos_lobos": [],
+            "reporte_muertes": muertos_esta_noche
         }
-    )
-
-    mensaje_final = "Todos los lobos han votado. "
-    if hay_unanimidad:
-        mensaje_final += "Hay consenso."
+    }
+    if not hay_bruja:
+        update_op["$unset"] = {"victima_lobos": ""}
+    if victoria:
+        update_op["$set"]["victoria_pendiente"] = victoria
     else:
-        mensaje_final += "No hubo unanimidad, la víctima se ha salvado."
+        update_op.setdefault("$unset", {})["victoria_pendiente"] = ""
+
+    await db.partidas.update_one({"codigo_sala": datos.codigo_sala}, update_op)
+    mensaje_final = "Todos los lobos han votado. "
+    mensaje_final += "Hay consenso." if hay_unanimidad else "No hubo unanimidad, la víctima se ha salvado."
 
     return {
         "mensaje": mensaje_final,
@@ -493,7 +536,6 @@ async def accion_lobos(datos: AccionLoboRequest):
 
 @app.post("/accion/bruja")
 async def accion_bruja(datos: AccionBrujaRequest):
-
     sala = await db.partidas.find_one({"codigo_sala": datos.codigo_sala})
     if not sala:
         raise HTTPException(status_code=404, detail="Sala no encontrada.")
@@ -501,10 +543,10 @@ async def accion_bruja(datos: AccionBrujaRequest):
         raise HTTPException(status_code=400, detail="Aún no es el turno de la Bruja.")
 
     jugadores = sala["jugadores"]
-    
-    bruja = next((j for j in jugadores if j["nombre"] == datos.nombre_bruja and j["rol"] == "Bruja"), None)
-    if not bruja or not bruja.get("vivo", True):
+    bruja = verificar_jugador(jugadores, datos.nombre_bruja, datos.token)
+    if bruja["rol"] != "Bruja" or not bruja.get("vivo", True):
         raise HTTPException(status_code=403, detail="No eres la Bruja o estás muerta.")
+
 
     victima_lobos = sala.get("victima_lobos")
     muertos_esta_noche = set()
@@ -543,29 +585,24 @@ async def accion_bruja(datos: AccionBrujaRequest):
     # LÓGICA DE VICTORIA 
     #estado_siguiente = calcular_siguiente_turno(jugadores, "turno_bruja") # <-- CAMBIADA
     estado_siguiente = "esperando_narrador_dia"
+    victoria = verificar_victoria(jugadores)
 
-    lobos_vivos = sum(1 for j in jugadores if j["rol"] == "Hombre Lobo" and j.get("vivo", True))
-    aldeanos_vivos = sum(1 for j in jugadores if j["rol"] not in ["Hombre Lobo", "narrador"] and j.get("vivo", True))
-    
-    if lobos_vivos == 0:
-        estado_siguiente = "victoria_aldeanos"
-    elif lobos_vivos >= aldeanos_vivos:
-        estado_siguiente = "victoria_lobos"
-        
-    # 7. Amanece en el rancho (O termina el juego)
-    await db.partidas.update_one(
-        {"codigo_sala": datos.codigo_sala},
-        {
-            "$set": {
-                "estado": estado_siguiente,
-                "jugadores": jugadores,
-                "reporte_muertes": list(muertos_esta_noche)
-            },
-            "$unset": {
-                "victima_lobos": "" 
-            }
+    update_op = {
+        "$set": {
+            "estado": estado_siguiente,
+            "jugadores": jugadores,
+            "reporte_muertes": list(muertos_esta_noche)
+        },
+        "$unset": {
+            "victima_lobos": ""
         }
-    )
+    }
+    if victoria:
+        update_op["$set"]["victoria_pendiente"] = victoria
+    else:
+        update_op["$unset"]["victoria_pendiente"] = ""
+
+    await db.partidas.update_one({"codigo_sala": datos.codigo_sala}, update_op)
 
     return {
         "mensaje": "Has mezclado tus pociones. La noche termina...",
@@ -575,46 +612,46 @@ async def accion_bruja(datos: AccionBrujaRequest):
 
 @app.post("/accion/votar-dia")
 async def votar_dia(datos: AccionVotoDiaRequest):
-    # 1. Buscar la sala
     sala = await db.partidas.find_one({"codigo_sala": datos.codigo_sala})
     if not sala:
         raise HTTPException(status_code=404, detail="Sala no encontrada.")
     if sala["estado"] != "dia":
         raise HTTPException(status_code=400, detail="No es de día. No se puede votar.")
 
-    jugadores = sala["jugadores"]
-
-    # 2. Validar que existe y está VIVO
-    votante = next((j for j in jugadores if j["nombre"] == datos.nombre_votante and j.get("vivo", True) and j["rol"] != "narrador"), None)
-    if not votante:
+    votante = verificar_jugador(sala["jugadores"], datos.nombre_votante, datos.token)
+    if not votante.get("vivo", True) or votante["rol"] == "narrador":
         raise HTTPException(status_code=403, detail="No puedes votar. Estás muerto o no eres jugador.")
 
-   
-    votos_actuales = sala.get("votos_dia", [])
-    
-    if any(v["votante"] == datos.nombre_votante for v in votos_actuales):
-        raise HTTPException(status_code=400, detail="Ya emitiste tu voto.")
-
-    # Voto del Alguacil no implementado 
     peso_voto = 2 if votante.get("alguacil") else 1
-    votos_actuales.append({
-        "votante": datos.nombre_votante, 
-        "acusado": datos.nombre_acusado,
-        "peso": peso_voto
-    })
 
-    # 4. Verificar si ya votaron TODOS los vivos
+    sala_actualizada = await db.partidas.find_one_and_update(
+        {
+            "codigo_sala": datos.codigo_sala,
+            "estado": "dia",
+            "votos_dia.votante": {"$ne": datos.nombre_votante}
+        },
+        {"$push": {"votos_dia": {
+            "votante": datos.nombre_votante,
+            "acusado": datos.nombre_acusado,
+            "peso": peso_voto
+        }}},
+        return_document=ReturnDocument.AFTER
+    )
+
+    if sala_actualizada is None:
+        ya_voto = any(v["votante"] == datos.nombre_votante for v in sala.get("votos_dia", []))
+        if ya_voto:
+            raise HTTPException(status_code=400, detail="Ya emitiste tu voto.")
+        raise HTTPException(status_code=400, detail="La votación ya no está activa.")
+
+    jugadores = sala_actualizada["jugadores"]
+    votos_actuales = sala_actualizada.get("votos_dia", [])
     jugadores_vivos = [j for j in jugadores if j.get("vivo", True) and j["rol"] != "narrador"]
-    
+
     if len(votos_actuales) < len(jugadores_vivos):
-        # Aún faltan votos
-        await db.partidas.update_one(
-            {"codigo_sala": datos.codigo_sala},
-            {"$set": {"votos_dia": votos_actuales}}
-        )
         return {"mensaje": f"Voto registrado. Esperando a los demás... ({len(votos_actuales)}/{len(jugadores_vivos)})"}
 
-    # 5. contar los votos
+    # 5. contar los votos  -> de aquí en adelante, todo sigue exactamente igual que tu versión original
     conteo = Counter()
     for voto in votos_actuales:
         conteo[voto["acusado"]] += voto["peso"]
@@ -658,54 +695,50 @@ async def votar_dia(datos: AccionVotoDiaRequest):
 
     # VICTORIA
    
-    lobos_vivos = sum(1 for j in jugadores if j["rol"] == "Hombre Lobo" and j.get("vivo", True))
-    aldeanos_vivos = sum(1 for j in jugadores if j["rol"] not in ["Hombre Lobo", "narrador"] and j.get("vivo", True))
-    
-    if lobos_vivos == 0:
-        estado_siguiente = "victoria_aldeanos"
-    elif lobos_vivos >= aldeanos_vivos:
-        estado_siguiente = "victoria_lobos"
-        
-    # 6. Actualiza la base de datos
-    await db.partidas.update_one(
-        {"codigo_sala": datos.codigo_sala},
-        {
-            "$set": {
-                "estado": estado_siguiente,
-                "jugadores": jugadores,
-                "ultimo_linchado": list(muertos_por_linchamiento) if not hubo_empate else []
-            },
-            "$unset": {
-                "votos_dia": "" # Vaciamos la urna
-            }
+    victoria = verificar_victoria(jugadores)
+
+    update_op = {
+        "$set": {
+            "estado": estado_siguiente,
+            "jugadores": jugadores,
+            "ultimo_linchado": list(muertos_por_linchamiento) if not hubo_empate else []
+        },
+        "$unset": {
+            "votos_dia": ""
         }
-    )
+    }
+    if victoria:
+        update_op["$set"]["victoria_pendiente"] = victoria
+    else:
+        update_op["$unset"]["victoria_pendiente"] = ""
+
+    await db.partidas.update_one({"codigo_sala": datos.codigo_sala}, update_op)
 
     mensaje_final = "El pueblo ha hablado. "
     if hubo_empate:
         mensaje_final += "Nadie es linchado hoy."
     else:
-        if estado_siguiente == "victoria_aldeanos":
-            mensaje_final += "¡Los aldeanos han acabado con el último Lobo!"
-        elif estado_siguiente == "victoria_lobos":
-            mensaje_final += "¡Los Lobos ya son mayoría y devoran al resto del pueblo!"
-        else:
-            mensaje_final += f"{nombre_linchado} ha sido linchado. "
+        mensaje_final += f"{nombre_linchado} ha sido linchado. "
 
     return {
         "mensaje": mensaje_final,
         "linchados": list(muertos_por_linchamiento),
         "estado_siguiente": estado_siguiente
     }
+
+
 @app.post("/accion/cazador")
 async def accion_cazador(datos: AccionCazadorRequest):
     sala = await db.partidas.find_one({"codigo_sala": datos.codigo_sala})
     if not sala:
         raise HTTPException(status_code=404, detail="Sala no encontrada.")
-    
-    # 1. Validación de estado
     if sala["estado"] != "turno_cazador":
         raise HTTPException(status_code=400, detail="No es el turno del Cazador.")
+
+    jugadores = sala["jugadores"]
+    cazador = verificar_jugador(jugadores, datos.nombre_cazador, datos.token)
+    if cazador["rol"] != "Cazador":
+        raise HTTPException(status_code=403, detail="No eres el Cazador.")
 
     jugadores = sala["jugadores"]
 
@@ -723,12 +756,13 @@ async def accion_cazador(datos: AccionCazadorRequest):
         for j in jugadores:
             if j["nombre"] == datos.nombre_objetivo:
                 j["vivo"] = False
-                
+                j["ciclo_muerte"] = ciclo_actual
                 # EFECTO DOMINÓ: Si el objetivo estaba enamorado, muere su pareja
                 if j.get("enamorado"):
                     for pareja in jugadores:
                         if pareja.get("enamorado") and pareja["nombre"] != datos.nombre_objetivo and pareja.get("vivo", True):
                             pareja["vivo"] = False
+                            pareja["ciclo_muerte"] = ciclo_actual
     else:
         # Si el objetivo ya estaba muerto o no existe, lanzamos error para que elija bien
         # Pero asegúrate de que el frontend permita elegir objetivos válidos
@@ -736,29 +770,22 @@ async def accion_cazador(datos: AccionCazadorRequest):
 
     # 4. Lógica de Victoria / Siguiente Turno
     # Verificamos si venimos de un linchamiento de día o una muerte de noche
+    victoria = verificar_victoria(jugadores)
+
     if sala.get("ultimo_linchado"):
         estado_siguiente = "esperando_narrador_noche"
+    elif victoria:
+        estado_siguiente = "esperando_narrador_dia"  # gate: el Narrador revela la victoria al avanzar
     else:
         estado_siguiente = "dia"
-    
-    lobos_vivos = sum(1 for j in jugadores if j["rol"] == "Hombre Lobo" and j.get("vivo", True))
-    aldeanos_vivos = sum(1 for j in jugadores if j["rol"] not in ["Hombre Lobo", "narrador"] and j.get("vivo", True))
 
-    if lobos_vivos == 0:
-        estado_siguiente = "victoria_aldeanos"
-    elif lobos_vivos >= aldeanos_vivos:
-        estado_siguiente = "victoria_lobos"
+    update_op = {"$set": {"estado": estado_siguiente, "jugadores": jugadores}}
+    if victoria:
+        update_op["$set"]["victoria_pendiente"] = victoria
+    else:
+        update_op.setdefault("$unset", {})["victoria_pendiente"] = ""
 
-    # 5. Actualización final en la base de datos
-    await db.partidas.update_one(
-        {"codigo_sala": datos.codigo_sala},
-        {
-            "$set": {
-                "estado": estado_siguiente,
-                "jugadores": jugadores
-            }
-        }
-    )
+    await db.partidas.update_one({"codigo_sala": datos.codigo_sala}, update_op)
 
     return {
         "mensaje": f"El Cazador dispara su última bala a {datos.nombre_objetivo}.",
