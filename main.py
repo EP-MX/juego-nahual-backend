@@ -740,19 +740,11 @@ async def accion_cazador(datos: AccionCazadorRequest):
     if cazador["rol"] != "Cazador":
         raise HTTPException(status_code=403, detail="No eres el Cazador.")
 
-    jugadores = sala["jugadores"]
-
-    # 2. Encontrar al Cazador (el nombre debe coincidir con el rol)
-    cazador = next((j for j in jugadores if j["nombre"] == datos.nombre_cazador and j["rol"] == "Cazador"), None)
-    if not cazador:
-        raise HTTPException(status_code=403, detail="No eres el Cazador.")
-
-    # 3. Procesar el disparo si el objetivo existe y está vivo
-    # Si el objetivo no es válido, podrías permitir que el turno avance sin disparo para no bloquear
+    # Procesar el disparo si el objetivo existe y está vivo
     objetivo = next((j for j in jugadores if j["nombre"] == datos.nombre_objetivo), None)
-    
+
     if objetivo and objetivo.get("vivo", True):
-        # Aplicar muerte al objetivo
+        ciclo_actual = sala.get("ciclo", 1)
         for j in jugadores:
             if j["nombre"] == datos.nombre_objetivo:
                 j["vivo"] = False
@@ -764,12 +756,9 @@ async def accion_cazador(datos: AccionCazadorRequest):
                             pareja["vivo"] = False
                             pareja["ciclo_muerte"] = ciclo_actual
     else:
-        # Si el objetivo ya estaba muerto o no existe, lanzamos error para que elija bien
-        # Pero asegúrate de que el frontend permita elegir objetivos válidos
         raise HTTPException(status_code=400, detail="Objetivo no válido o ya muerto.")
 
-    # 4. Lógica de Victoria / Siguiente Turno
-    # Verificamos si venimos de un linchamiento de día o una muerte de noche
+    # Lógica de Victoria / Siguiente Turno
     victoria = verificar_victoria(jugadores)
 
     if sala.get("ultimo_linchado"):
@@ -783,7 +772,7 @@ async def accion_cazador(datos: AccionCazadorRequest):
     if victoria:
         update_op["$set"]["victoria_pendiente"] = victoria
     else:
-        update_op.setdefault("$unset", {})["victoria_pendiente"] = ""
+        update_op["$unset"] = {"victoria_pendiente": ""}
 
     await db.partidas.update_one({"codigo_sala": datos.codigo_sala}, update_op)
 
