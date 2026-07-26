@@ -14,8 +14,8 @@
   <div style="display: flex; gap: 8px;">
     <button class="logout-btn" onclick="document.getElementById('modal-reglas').style.display='flex'">Reglas</button>
     <button class="logout-btn" onclick="salirDePartida()">Cerrar sesión</button>
-    <button class="logout-btn" onclick="activarScreamer()" style="background:rgba(230,57,70,0.15); color:var(--blood-light); border:1px solid rgba(230,57,70,0.4);">
-  🎃 Test
+    <button class="logout-btn" onclick="activarScreamer('test_' + Date.now())" style="background:rgba(230,57,70,0.15); color:var(--blood-light); border:1px solid rgba(230,57,70,0.4);">
+  Test
 </button>
   </div>
 </div>
@@ -124,8 +124,8 @@
 
 <script>
         //const API_URL = "http://127.0.0.1:8000";
-        let API_URL = "http://127.0.0.1:8000"; //multiples jugadores prueba 
-        //const API_URL = "https://nahuales-vs-rancheros.onrender.com";   
+        //let API_URL = "http://127.0.0.1:8000"; //multiples jugadores prueba 
+        const API_URL = "https://nahuales-vs-rancheros.onrender.com";   
         let miNombre = "";
         let miSala = "";
         let miToken = "";
@@ -174,30 +174,38 @@
 
 
         // Función maestra del Screamer
-        function activarScreamer(claveUnica) {
-            // La bandera ahora es por sala+jugador+muerte específica, no un flag global —
-            // así cada jugador (o cada iframe en la consola de pruebas) tiene su propio candado
-            // y no se pisan entre sí, pero sigue sin repetirse si el mismo jugador recarga la página.
+        function activarScreamer(claveUnica, duracionMs = 2500) {
             const clave = `screamer_visto_${claveUnica}`;
             if (sessionStorage.getItem(clave) === "true") return;
 
+            const overlay = document.getElementById("contenedor-screamer");
             const audio = document.getElementById("audio-screamer");
-            const contenedor = document.getElementById("contenedor-screamer");
+            if (!overlay) return;
 
-            // Reproducimos el sonido al máximo volumen
-            audio.volume = 1.0;
-            audio.play().catch(e => console.log("El navegador bloqueó el autoplay del audio."));
+            // Forzar reset de animación (por si alguna vez se llama dos veces seguidas)
+            overlay.style.display = "none";
+            overlay.style.animation = "none";
+            void overlay.offsetWidth; // fuerza al navegador a "olvidar" el estado
+            overlay.style.animation = "";
+            overlay.style.display = "flex"; // tu CSS de #contenedor-screamer centra con flex
 
-            // Mostramos la imagen aterradora
-            contenedor.style.display = "flex";
+            if (audio) {
+                audio.currentTime = 0;
+                audio.volume = 1.0;
+                audio.play().catch(err => console.log("Audio bloqueado:", err));
+            }
 
-            // Marcamos que ya se asustó para que no vuelva a pasar
+            if (navigator.vibrate) navigator.vibrate([100, 50, 200, 50, 300]);
+
             sessionStorage.setItem(clave, "true");
 
-            // Ocultamos la imagen después de 2.5 segundos (el tiempo perfecto para un susto)
             setTimeout(() => {
-                contenedor.style.display = "none";
-            }, 2500);
+                overlay.style.display = "none";
+                if (audio) {
+                    audio.pause();
+                    audio.currentTime = 0;
+                }
+            }, duracionMs);
         }
 
 
@@ -980,7 +988,7 @@ else if (miRol === "narrador") {
 <!-- SISTEMA DE SCREAMER -->
 <audio id="audio-screamer" src="media/lobo_atacando.mp3" preload="auto"></audio>
 <div id="contenedor-screamer" style="display: none;">
-    <img src="media/screamer_lobo.jpg" alt="Screamer">
+    <img src="media/screamer_lobo.webp" alt="Screamer">
 </div>
 
 </body>
