@@ -65,6 +65,12 @@ class AccionBrujaRequest(BaseModel):
     usar_pocion_vida: bool
     objetivo_pocion_muerte: Optional[str] = None
     token: str
+
+class AccionNinaRequest(BaseModel):
+    codigo_sala: str
+    nombre_nina: str
+    token: str
+
 class AccionVotoDiaRequest(BaseModel):
     codigo_sala: str
     nombre_votante: str
@@ -266,6 +272,7 @@ async def iniciar_juego(datos: IniciarJuegoRequest):
             
         jugador["enamorado"] = False
         jugador["alguacil"] = False
+        jugador["espio_esta_noche"] = False
 
     lista_final_jugadores = [narrador] + jugadores_activos
 
@@ -313,7 +320,6 @@ async def narrador_avanzar(datos: NarradorAvanzarRequest):
         return {"mensaje": "El juego ha terminado.", "estado_siguiente": victoria_pendiente}
 
     if estado_actual == "esperando_narrador_dia":
-        # 2. Verificamos si el Cazador murió en esta misma noche
         cazador_murio_noche = any(
             j["rol"] == "Cazador" and 
             j["vivo"] == False and 
@@ -326,6 +332,10 @@ async def narrador_avanzar(datos: NarradorAvanzarRequest):
         else:
             siguiente = "dia"
 
+    elif estado_actual == "esperando_narrador_amanecer":
+        # El Cazador ya disparó su última bala; ahora sí, amanece.
+        siguiente = "dia"
+
     elif estado_actual == "esperando_narrador_noche":
         hay_vidente = any(j["rol"] == "Vidente" and j.get("vivo", True) for j in jugadores)
         if hay_vidente:
@@ -336,10 +346,17 @@ async def narrador_avanzar(datos: NarradorAvanzarRequest):
         raise HTTPException(status_code=400, detail="No puedes avanzar en este momento.")
 
     if estado_actual == "esperando_narrador_noche":
+        # Reiniciar variables nocturnas para todos los jugadores ---
+        for j in jugadores:
+            j["espio_esta_noche"] = False
+
         await db.partidas.update_one(
             {"codigo_sala": datos.codigo_sala},
             {
-                "$set": {"estado": siguiente},
+                "$set": {
+                    "estado": siguiente,
+                    "jugadores": jugadores 
+                },
                 "$inc": {"ciclo": 1},
                 "$unset": {"ultimo_linchado": ""}
             }
@@ -409,7 +426,7 @@ async def accion_vidente(datos: AccionVidenteRequest):
     if not objetivo.get("vivo", True):
         # Si está muerto, marcamos el error pero NO lanzamos HTTPException
         error_muerto = True
-        rol_descubierto = "DESCONOCIDO (Por investigar a un muerto)"
+        rol_descubierto = "Un espíritu errante"  # Mensaje genérico para no revelar el rol real de los muertos
 
     # SIEMPRE avanzamos el turno, sin importar si eligió a un muerto o no
     siguiente_turno = calcular_siguiente_turno(jugadores, "turno_vidente")
@@ -526,7 +543,7 @@ async def accion_lobos(datos: AccionLoboRequest):
 
     await db.partidas.update_one({"codigo_sala": datos.codigo_sala}, update_op)
     mensaje_final = "Todos los lobos han votado. "
-    mensaje_final += "Hay consenso." if hay_unanimidad else "No hubo unanimidad, la víctima se ha salvado."
+    mensaje_final += "Hay consenso." if hay_unanimidad else "No ae pusieron deacuerdo, el aldeano se a salvado."
 
     return {
         "mensaje": mensaje_final,
@@ -609,6 +626,120 @@ async def accion_bruja(datos: AccionBrujaRequest):
         "estado_siguiente": estado_siguiente,
         "bajas_totales": list(muertos_esta_noche)
     }
+
+@app.post("/accion/nina")
+async def accion_nina(datos: AccionNinaRequest):
+    # 1. Buscamos la sala
+    sala = await db.partidas.find_one({"codigo_sala": datos.codigo_sala})
+    if not sala:
+        raise HTTPException(status_code=404, detail="Sala no encontrada.")
+
+    # 2. Solo puede espiar durante el turno de los lobos
+    if sala["estado"] != "turno_lobos":
+        raise HTTPException(status_code=400, detail="Solo puedes espiar durante la noche de los lobos.")
+
+    jugadores = sala["jugadores"]
+
+    # 3. Validar que es la Niña, está viva y no espió ya esta noche
+    nina = next((j for j in jugadores if j["nombre"] == datos.nombre_nina and j["rol"] == "Niña"), None)
+    if not nina:
+        raise HTTPException(status_code=403, detail="No eres la Niña.")
+    if not nina.get("vivo", True):
+        raise HTTPException(status_code=403, detail="Estás muerta, no puedes espiar.")
+    if nina.get("espio_esta_noche"):
+        raise HTTPException(status_code=400, detail="Ya usaste tu espionaje esta noche.")
+
+    # 4. Marcamos que ya espió (una vez por noche)
+    for j in jugadores:
+        if j["nombre"] == datos.nombre_nina:
+            j["espio_esta_noche"] = True
+
+    # 5. Ruleta rusa: probabilidad ajustada a 40%
+    hizo_ruido = random.random() < 0.4
+
+    if hizo_ruido:
+        # 1. Cancelamos la votación de los lobos y pasamos a confirmación con la Niña como presa
+        await db.partidas.update_one(
+            {"codigo_sala": datos.codigo_sala},
+            {"$set": {
+                "jugadores": jugadores,
+                "estado": "confirmando_lobos",
+                "victima_lobos": datos.nombre_nina,
+                "nina_atrapada": True
+            }}
+        )
+
+        # 2. Hacemos la pausa de 5 segundos
+        import asyncio
+        await asyncio.sleep(5)
+
+        # 3. Avanzamos al siguiente turno (Bruja o Amanecer)
+        sala_actualizada = await db.partidas.find_one({"codigo_sala": datos.codigo_sala})
+        jugadores_act = sala_actualizada["jugadores"]
+        hay_bruja = any(j["rol"] == "Bruja" and j.get("vivo", True) for j in jugadores_act)
+        muertos_esta_noche = []
+
+        ciclo_actual = sala_actualizada.get("ciclo", 1)
+        if not hay_bruja:
+            for j in jugadores_act:
+                if j["nombre"] == datos.nombre_nina and j.get("vivo", True):
+                    j["vivo"] = False
+                    j["ciclo_muerte"] = ciclo_actual
+                    muertos_esta_noche.append(datos.nombre_nina)
+                    # Cascadas de Cupido
+                    if j.get("enamorado"):
+                        for j2 in jugadores_act:
+                            if j2.get("enamorado") and j2["nombre"] != datos.nombre_nina and j2.get("vivo", True):
+                                j2["vivo"] = False
+                                j2["ciclo_muerte"] = ciclo_actual
+                                muertos_esta_noche.append(j2["nombre"])
+                    break
+
+        estado_siguiente = calcular_siguiente_turno(jugadores_act, "turno_lobos")
+        victoria = verificar_victoria(jugadores_act)
+
+        update_op = {
+            "$set": {
+                "estado": estado_siguiente,
+                "jugadores": jugadores_act,
+                "votos_lobos": [],
+                "reporte_muertes": muertos_esta_noche
+            },
+            "$unset": {"nina_atrapada": ""}
+        }
+        if not hay_bruja:
+            update_op["$unset"]["victima_lobos"] = ""
+        if victoria:
+            update_op["$set"]["victoria_pendiente"] = victoria
+        else:
+            update_op.setdefault("$unset", {})["victoria_pendiente"] = ""
+
+        await db.partidas.update_one({"codigo_sala": datos.codigo_sala}, update_op)
+
+        return {
+            "hizo_ruido": True,
+            "mensaje": "¡Los lobos te descubrieron! Serás devorada.",
+            "lobo_revelado": None
+        }
+        
+    else:
+        # --- ESTA ES LA PARTE QUE FALTABA (EL ÉXITO) ---
+        lobos_vivos = [j["nombre"] for j in jugadores if j["rol"] == "Hombre Lobo" and j.get("vivo", True)]
+        if not lobos_vivos:
+            return {"hizo_ruido": False, "mensaje": "No quedan lobos vivos.", "lobo_revelado": None}
+
+        lobo_revelado = random.choice(lobos_vivos)
+
+        await db.partidas.update_one(
+            {"codigo_sala": datos.codigo_sala},
+            {"$set": {"jugadores": jugadores}}
+        )
+
+        return {
+            "hizo_ruido": False,
+            "mensaje": f"Espiaste con éxito.",
+            "lobo_revelado": lobo_revelado
+        }
 
 @app.post("/accion/votar-dia")
 async def votar_dia(datos: AccionVotoDiaRequest):
@@ -740,7 +871,6 @@ async def accion_cazador(datos: AccionCazadorRequest):
     if cazador["rol"] != "Cazador":
         raise HTTPException(status_code=403, detail="No eres el Cazador.")
 
-    # Procesar el disparo si el objetivo existe y está vivo
     objetivo = next((j for j in jugadores if j["nombre"] == datos.nombre_objetivo), None)
 
     if objetivo and objetivo.get("vivo", True):
@@ -749,7 +879,6 @@ async def accion_cazador(datos: AccionCazadorRequest):
             if j["nombre"] == datos.nombre_objetivo:
                 j["vivo"] = False
                 j["ciclo_muerte"] = ciclo_actual
-                # EFECTO DOMINÓ: Si el objetivo estaba enamorado, muere su pareja
                 if j.get("enamorado"):
                     for pareja in jugadores:
                         if pareja.get("enamorado") and pareja["nombre"] != datos.nombre_objetivo and pareja.get("vivo", True):
@@ -758,15 +887,17 @@ async def accion_cazador(datos: AccionCazadorRequest):
     else:
         raise HTTPException(status_code=400, detail="Objetivo no válido o ya muerto.")
 
-    # Lógica de Victoria / Siguiente Turno
     victoria = verificar_victoria(jugadores)
 
     if sala.get("ultimo_linchado"):
+        # Venía de un linchamiento de día -> el narrador ya narró esa muerte, ahora avisa la noche
         estado_siguiente = "esperando_narrador_noche"
     elif victoria:
-        estado_siguiente = "esperando_narrador_dia"  # gate: el Narrador revela la victoria al avanzar
+        # Hay que revelar la victoria — se reutiliza el gate normal
+        estado_siguiente = "esperando_narrador_dia"
     else:
-        estado_siguiente = "dia"
+        # Disparo nocturno sin victoria: un paso extra explícito antes de que amanezca
+        estado_siguiente = "esperando_narrador_amanecer"
 
     update_op = {"$set": {"estado": estado_siguiente, "jugadores": jugadores}}
     if victoria:
