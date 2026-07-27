@@ -209,6 +209,48 @@
         }
 
 
+        // --- SISTEMA DE AUDIO AMBIENTAL ---
+        let timeoutSonidoAleatorio;
+        
+        // Lista exacta de tus archivos de media (puedes quitar o agregar los que quieras)
+        const listaSonidosAmbientales = [
+            "media/aleteo_pajaros.mp3",
+            "media/alguien_entre_los_arbustos.mp3",
+            "media/aullido_lobo.mp3",
+            "media/buho.mp3",
+            "media/caminata_sobre_hojas.mp3",
+            "media/cuervos.mp3",
+            "media/grillos.mp3",
+            "media/ramas_quebrandose.mp3",
+            "media/viento_misterioso.mp3",
+            "media/viento.mp3"
+        ];
+
+        function iniciarSonidosAleatorios() {
+            // Elige un tiempo de espera al azar entre 10 y 35 segundos
+            const tiempoEspera = Math.floor(Math.random() * (60000 - 30000 + 1)) + 30000;            
+            timeoutSonidoAleatorio = setTimeout(() => {
+                const reproductorRandom = document.getElementById("audio-random");
+                
+                if (reproductorRandom) {
+                    // 1. Escoge un archivo al azar de tu lista
+                    const sonidoElegido = listaSonidosAmbientales[Math.floor(Math.random() * listaSonidosAmbientales.length)];
+                    reproductorRandom.src = sonidoElegido;
+                    
+                    // 2. Le da un volumen aleatorio (entre 30% y 80%) para simular cercanía/lejanía
+                    reproductorRandom.volume = Math.random() * 0.5 + 0.3;
+                    
+                    // 3. Lo reproduce
+                    reproductorRandom.play().catch(e => console.log("Navegador bloqueó el audio", e));
+                }
+                
+                // 4. Vuelve a llamarse a sí misma para crear el ciclo infinito
+                iniciarSonidosAleatorios();
+            }, tiempoEspera);
+        }
+        // ----------------------------------
+
+
        // Función 1: Crear Sala
         async function crearSala() {
     miNombre = document.getElementById("input-nombre").value;
@@ -271,25 +313,37 @@
             document.getElementById("pantalla-lobby").style.display = "block";
             document.getElementById("display-codigo").innerText = miSala;
             
+            // --- ACTIVACIÓN DE AUDIO POR ROL ---
+            if (esNarrador) {
+                // El Narrador escucha el loop de fondo suavemente
+                const audioNarrador = document.getElementById("audio-bosque-loop");
+                audioNarrador.volume = 0.4; 
+                audioNarrador.play().catch(e => console.log("Audio de narrador bloqueado"));
+            } else {
+                // Los jugadores comienzan a recibir sonidos aleatorios
+                iniciarSonidosAleatorios(); 
+            }
+            // -----------------------------------
+
             // Mantenemos tu lógica original:
             if (esNarrador) {
-        document.getElementById("btn-iniciar").style.display = "block";
-        document.getElementById("seleccion-roles").style.display = "block";
-        document.getElementById("display-rol").innerText = "NARRADOR";
-    } else {
-        document.getElementById("btn-iniciar").style.display = "none";
-        document.getElementById("seleccion-roles").style.display = "none";
-    }
+            document.getElementById("btn-iniciar").style.display = "block";
+            document.getElementById("seleccion-roles").style.display = "block";
+            document.getElementById("display-rol").innerText = "NARRADOR";
+            } else {
+            document.getElementById("btn-iniciar").style.display = "none";
+            document.getElementById("seleccion-roles").style.display = "none";
+            }
 
             actualizarSala();
 
             if (intervaloActualizacion) clearInterval(intervaloActualizacion);
             
             intervaloActualizacion = setInterval(actualizarSala, 2000);
-        }
+            }
             let enamoradosElegidos = [];
 
-        function seleccionarEnamorado(nombre) {
+            function seleccionarEnamorado(nombre) {
             if (enamoradosElegidos.length >= 2) return;
             if (enamoradosElegidos.includes(nombre)) return;
             enamoradosElegidos.push(nombre);
@@ -445,6 +499,23 @@ async function usarBruja(salvar, objetivoMuerte) {
             }
 
             const sala = await respuesta.json();
+
+            // --- NUEVO DETONADOR DE SCREAMER (Frena la interfaz) ---
+            const datosScreamer = sala.jugadores.find(j => j.nombre === miNombre);
+            if (datosScreamer && !datosScreamer.vivo && datosScreamer.rol !== "narrador") {
+                const muertesNocturnas = sala.reporte_muertes || [];
+                
+                // ¡REGLA ESTRICTA! Solo se activa en "dia" o "turno_cazador"
+                if (muertesNocturnas.includes(miNombre) && ["dia", "turno_cazador"].includes(sala.estado)) {
+                    const claveSusto = `${miSala}_${miNombre}_muerte_noche_${sala.ciclo || 1}`;
+                    
+                    if (sessionStorage.getItem("screamer_visto_" + claveSusto) !== "true") {
+                        activarScreamer(claveSusto);
+                        return; // 🛑 Frena la actualización para que el texto de muerte no haga spoiler
+                    }
+                }
+            }
+            // -------------------------------------------------------
             const ul = document.getElementById("lista-jugadores");
             ul.innerHTML = ""; 
             let miRol = "narrador";
@@ -494,6 +565,7 @@ async function usarBruja(salvar, objetivoMuerte) {
                 if (selRoles) selRoles.style.display = "none";
             }
 
+
             // 3. MÁQUINA DE ESTADOS VISUAL (Lo que se ve en depende del turno)
            
             let controlesHTML = esNarrador ? `<h3>Estado: ${sala.estado.replace(/_/g, ' ').toUpperCase()}</h3>` : ``;
@@ -502,19 +574,6 @@ async function usarBruja(salvar, objetivoMuerte) {
             const soyMuertoEsteCicloControles = miJugador?.ciclo_muerte === cicloCurrent;
             const soyMuertoAntesControles = !estoyVivo && (miJugador?.ciclo_muerte || 0) < cicloCurrent;
             const mostrarComoMuertoEnControles = soyMuertoAntesControles || (!estoyVivo && !(soyMuertoEsteCicloControles && estadosNocturnosOcultos.includes(sala.estado)));
-
-            // --- DETONADOR DE SCREAMER (Muerte nocturna) ---
-            if (!estoyVivo && miRol !== "narrador") {
-                const muertesNocturnas = sala.reporte_muertes || [];
-                const moriEstaNoche = muertesNocturnas.includes(miNombre);
-                
-                // Solo asustar si fui víctima nocturna Y el narrador está anunciando el amanecer
-                if (moriEstaNoche && ["esperando_narrador_dia", "turno_cazador"].includes(sala.estado)) {
-                    // Le mandamos la clave con el ciclo actual para que sepa exactamente en qué noche murió
-                    activarScreamer(`${miSala}_${miNombre}_muerte_noche_${cicloCurrent}`);
-                }
-            }
-            // -----------------------------------------------
 
 
             if (mostrarComoMuertoEnControles && sala.estado !== "turno_cazador" && sala.estado !== "victoria_lobos" && sala.estado !== "victoria_aldeanos") {
@@ -658,7 +717,13 @@ async function usarBruja(salvar, objetivoMuerte) {
                 controlesHTML += `<p>Has muerto, pero puedes llevarte a alguien contigo.</p>`;
                 controlesHTML += `<p>¿A quién dispararás?</p>`;
                 
-                sala.jugadores.filter(j => j.vivo && j.rol !== 'narrador' && j.nombre !== miNombre).forEach(j => {
+                sala.jugadores.filter(j => {
+                    // Para evitar spoilers, incluimos a los vivos Y a los que murieron ESTA MISMA noche
+                    const murioEstaNoche = (j.vivo === false && j.ciclo_muerte === cicloCurrent);
+                    const esBlancoValido = (j.vivo || murioEstaNoche);
+                    
+                    return esBlancoValido && j.rol !== 'narrador' && j.nombre !== miNombre;
+                }).forEach(j => {
                     controlesHTML += `<button onclick="usarCazador('${j.nombre}')">Disparar a ${j.nombre}</button> `;
                 });
             }
@@ -990,6 +1055,12 @@ else if (miRol === "narrador") {
 <div id="contenedor-screamer" style="display: none;">
     <img src="media/screamer_lobo.webp" alt="Screamer">
 </div>
+
+<!-- SISTEMA DE AMBIENTE -->
+<!-- Loop infinito para el Narrador -->
+<audio id="audio-bosque-loop" src="media/loop_bosque_noche.mp3" loop preload="auto"></audio>
+<!-- Reproductor dinámico para los sustos de los jugadores -->
+<audio id="audio-random" preload="auto"></audio>
 
 </body>
 </html>

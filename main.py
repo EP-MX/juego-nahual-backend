@@ -872,9 +872,12 @@ async def accion_cazador(datos: AccionCazadorRequest):
         raise HTTPException(status_code=403, detail="No eres el Cazador.")
 
     objetivo = next((j for j in jugadores if j["nombre"] == datos.nombre_objetivo), None)
+    ciclo_actual = sala.get("ciclo", 1)
 
-    if objetivo and objetivo.get("vivo", True):
-        ciclo_actual = sala.get("ciclo", 1)
+    # Permitir el disparo si está vivo O si murió en este mismo ciclo (para no revelar spoilers)
+    blanco_valido = objetivo and (objetivo.get("vivo", True) or objetivo.get("ciclo_muerte") == ciclo_actual)
+
+    if blanco_valido:
         for j in jugadores:
             if j["nombre"] == datos.nombre_objetivo:
                 j["vivo"] = False
@@ -885,7 +888,7 @@ async def accion_cazador(datos: AccionCazadorRequest):
                             pareja["vivo"] = False
                             pareja["ciclo_muerte"] = ciclo_actual
     else:
-        raise HTTPException(status_code=400, detail="Objetivo no válido o ya muerto.")
+        raise HTTPException(status_code=400, detail="Objetivo no válido o ya muerto desde días anteriores.")
 
     victoria = verificar_victoria(jugadores)
 
