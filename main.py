@@ -1,3 +1,5 @@
+import os
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -12,7 +14,11 @@ import secrets
 
 
 # 1. Configuración de Base de Datos
-MONGO_URL = "mongodb+srv://juego_admin:QaSVs2o7Q8uHwLA8@juego.yijg6sl.mongodb.net/?appName=Juego" 
+load_dotenv()
+MONGO_URL = os.environ.get("MONGO_URL")
+
+if not MONGO_URL:
+    raise RuntimeError("Falta la variable de entorno MONGO_URL.")
 cliente = AsyncIOMotorClient(MONGO_URL)
 db = cliente.game_db 
 

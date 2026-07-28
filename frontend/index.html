@@ -14,9 +14,9 @@
   <div style="display: flex; gap: 8px;">
     <button class="logout-btn" onclick="document.getElementById('modal-reglas').style.display='flex'">Reglas</button>
     <button class="logout-btn" onclick="salirDePartida()">Cerrar sesión</button>
-    <button class="logout-btn" onclick="activarScreamer('test_' + Date.now())" style="background:rgba(230,57,70,0.15); color:var(--blood-light); border:1px solid rgba(230,57,70,0.4);">
+    <!-- <button class="logout-btn" onclick="activarScreamer('test_' + Date.now())" style="background:rgba(230,57,70,0.15); color:var(--blood-light); border:1px solid rgba(230,57,70,0.4);">
   Test
-</button>
+</button> -->
   </div>
 </div>
 
@@ -276,11 +276,20 @@
     }
 }
 
-        // Función 2: Unirse a Sala
-        async function unirseSala() {
+    // Función 2: Unirse a Sala
+async function unirseSala() {
     miNombre = document.getElementById("input-nombre").value;
     miSala = document.getElementById("input-codigo").value.trim().toUpperCase();
     if (!miNombre || !miSala) return alert("Faltan datos");
+
+    // --- NUEVO: Bloquear el botón para evitar doble clic ---
+    const btnUnirse = document.querySelector("button[onclick='unirseSala()']");
+    if (btnUnirse) {
+        btnUnirse.disabled = true;
+        btnUnirse.innerText = "Entrando...";
+        btnUnirse.style.opacity = "0.5"; // Lo hace ver "apagado"
+    }
+    // -------------------------------------------------------
 
     const respuesta = await fetch(`${API_URL}/unirse-sala`, {
         method: "POST",
@@ -305,6 +314,13 @@
     } else {
         const error = await respuesta.json();
         document.getElementById("mensaje-error").innerText = error.detail;
+        // --- NUEVO: Reactivar el botón si hubo un error (ej. contraseña mal) ---
+                if (btnUnirse) {
+                    btnUnirse.disabled = false;
+                    btnUnirse.innerText = "Unirse a sala";
+                    btnUnirse.style.opacity = "1";
+                }
+                // -----------------------------------------------------------------------
     }
 }
 
