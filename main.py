@@ -154,7 +154,21 @@ async def estado_servidor():
 
 @app.post("/crear-sala")
 async def crear_sala(datos: CrearSalaRequest):
-    await db.partidas.delete_many({})
+    # 1. LA BARREDORA: Eliminamos las partidas terminadas
+    await db.partidas.delete_many({
+        "estado": {"$in": ["victoria_lobos", "victoria_aldeanos"]}
+    })
+
+    # 2. EL CADENERO: Contamos las partidas que siguen activas
+    salas_activas = await db.partidas.count_documents({})
+
+    # 3. EL LÍMITE: Bloqueamos si ya hay 5
+    if salas_activas >= 5:
+        raise HTTPException(
+            status_code=400, 
+            detail="El servidor está lleno. Ya hay 5 partidas activas jugándose, espera a que termine una."
+        )
+    # --- AQUÍ TERMINA LA NUEVA LÓGICA ---
     codigo = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
     token_narrador = secrets.token_hex(12)
 
