@@ -757,9 +757,14 @@ if (respuesta.status === 404) {
             //posible remplazo
 
             const esNarrador = (miRol === "narrador");
+            const enEspera = (sala.estado === "esperando_jugadores");
+
             document.getElementById("titulo-sala").style.display = esNarrador ? "block" : "none";
-            document.getElementById("titulo-jugadores").style.display = "none"; // el Registro General de abajo ya lo reemplaza
-            document.getElementById("lista-jugadores").style.display = "none"; // el Registro General de abajo ya lo reemplaza
+            
+            // ¡Solución! Mostrar la lista simple SÓLO en la sala de espera
+            document.getElementById("titulo-jugadores").style.display = enEspera ? "block" : "none"; 
+            document.getElementById("lista-jugadores").style.display = enEspera ? "block" : "none"; 
+            
             document.getElementById("etiqueta-rol").style.display = "inline";
 
             // --- INICIO DE CAMBIO: Ocultar info a jugadores ---
