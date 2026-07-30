@@ -731,11 +731,21 @@ if (respuesta.status === 404) {
                 const muertoAntes = jugador.vivo === false && (jugador.ciclo_muerte || 0) < cicloCurrent;
                 const mostrarMuerto = (jugador.vivo === false && !ocultarPorNoche) || muertoAntes;
 
-                let texto = `${jugador.nombre} - ${mostrarMuerto ? "💀 MUERTO" : "VIVO"}`;
-                if (sala.estado === "esperando_jugadores" || miNombre === jugador.nombre || miNombre === sala.jugadores[0].nombre) {
-                    texto += ` (${jugador.rol})`; 
+                if (sala.estado === "esperando_jugadores") {
+                    // Diseño limpio y elegante exclusivo para la sala de espera
+                    if (jugador.rol === "narrador") {
+                        li.innerHTML = `<span style="color: var(--daylight); font-size: 1.1rem; font-weight: 600;">${jugador.nombre}</span> <span style="color: var(--text-mute); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; float: right; margin-top: 4px;">Narrador</span>`;
+                    } else {
+                        li.innerHTML = `<span style="color: white; font-size: 1.1rem;">${jugador.nombre}</span>`;
+                    }
+                } else {
+                    // Diseño normal para cuando la partida ya está en curso
+                    let texto = `${jugador.nombre} - ${mostrarMuerto ? "MUERTO" : "VIVO"}`;
+                    if (miNombre === jugador.nombre || miNombre === sala.jugadores[0].nombre) {
+                        texto += ` (${jugador.rol})`; 
+                    }
+                    li.innerText = texto;
                 }
-                li.innerText = texto;
                 ul.appendChild(li);
                 
                 if(jugador.nombre === miNombre) {
