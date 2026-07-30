@@ -163,7 +163,7 @@ async def crear_sala(datos: CrearSalaRequest):
     salas_activas = await db.partidas.count_documents({})
 
     # 3. EL LÍMITE: Bloqueamos si ya hay 5
-    if salas_activas >= 5:
+    if salas_activas >= 700:
         raise HTTPException(
             status_code=400, 
             detail="El servidor está lleno. Ya hay 5 partidas activas jugándose, espera a que termine una."
@@ -378,9 +378,16 @@ async def narrador_avanzar(datos: NarradorAvanzarRequest):
                     "jugadores": jugadores 
                 },
                 "$inc": {"ciclo": 1},
-                "$unset": {"ultimo_linchado": ""}
+                "$unset": {
+                    "ultimo_linchado": "",
+                    "reporte_vidente": "",
+                    "reporte_bruja": "",
+                    "victima_cazador": "",
+                    "reporte_muertes": ""
+                }
             }
         )
+        
     else:
         await db.partidas.update_one(
             {"codigo_sala": datos.codigo_sala},
@@ -453,7 +460,10 @@ async def accion_vidente(datos: AccionVidenteRequest):
     
     await db.partidas.update_one(
         {"codigo_sala": datos.codigo_sala},
-        {"$set": {"estado": siguiente_turno}}
+        {"$set": {
+            "estado": siguiente_turno,
+            "reporte_vidente": {"objetivo": datos.nombre_objetivo, "rol": rol_descubierto}
+        }}
     )
 
     if error_muerto:
@@ -624,11 +634,18 @@ async def accion_bruja(datos: AccionBrujaRequest):
     estado_siguiente = "esperando_narrador_dia"
     victoria = verificar_victoria(jugadores)
 
+    # Preparamos el reporte para el frontend
+    salvado_por_bruja = victima_lobos if datos.usar_pocion_vida and victima_lobos else None
+    
     update_op = {
         "$set": {
             "estado": estado_siguiente,
             "jugadores": jugadores,
-            "reporte_muertes": list(muertos_esta_noche)
+            "reporte_muertes": list(muertos_esta_noche),
+            "reporte_bruja": {
+                "salvo": salvado_por_bruja, 
+                "mato": datos.objetivo_pocion_muerte
+            }
         },
         "$unset": {
             "victima_lobos": ""
@@ -802,36 +819,56 @@ async def votar_dia(datos: AccionVotoDiaRequest):
     if len(votos_actuales) < len(jugadores_vivos):
         return {"mensaje": f"Voto registrado. Esperando a los demás... ({len(votos_actuales)}/{len(jugadores_vivos)})"}
 
-    # 5. contar los votos  -> de aquí en adelante, todo sigue exactamente igual que tu versión original
+    jugadores = sala_actualizada["jugadores"]
+    votos_actuales = sala_actualizada.get("votos_dia", [])
+    jugadores_vivos = [j for j in jugadores if j.get("vivo", True) and j["rol"] != "narrador"]
+
+    # Verifica si aún faltan jugadores por votar
+    if len(votos_actuales) < len(jugadores_vivos):
+        return {"mensaje": f"Voto registrado. Esperando a los demás... ({len(votos_actuales)}/{len(jugadores_vivos)})"}
+
+    # --- ESCUDO DE SEGURIDAD ---
+    # Si por alguna razón pasa la validación anterior pero no hay votos, evitamos que el código truene
+    if not votos_actuales:
+        return {
+            "mensaje": "No se registraron votos. Nadie es linchado hoy.",
+            "linchados": [],
+            "estado_siguiente": calcular_siguiente_turno(jugadores, "dia")
+        }
+    # ---------------------------
+
+
+    # 5. contar los votos
     conteo = Counter()
     for voto in votos_actuales:
         conteo[voto["acusado"]] += voto["peso"]
 
-    # Obtenemos al más votado (linchado)
+    total_poder_voto = sum(v["peso"] for v in votos_actuales)
+
+    # Obtenemos al más votado
     mas_votado = conteo.most_common(1)[0]
     nombre_linchado = mas_votado[0]
-    
-    # Manejo de empates
-    hubo_empate = False
-    if len(conteo) > 1:
-        segundo_mas_votado = conteo.most_common(2)[1]
-        if mas_votado[1] == segundo_mas_votado[1]:
-            hubo_empate = True
+    votos_del_mas_votado = mas_votado[1]
+
+    # REGLA DE MAYORÍA ABSOLUTA: necesita más de la mitad del poder de voto total.
+    # Esto también cubre los empates automáticamente: si dos están empatados,
+    # ninguno de los dos puede tener más de la mitad por definición.
+    hay_mayoria = votos_del_mas_votado * 2 > total_poder_voto
 
     muertos_por_linchamiento = set()
-    estado_siguiente = calcular_siguiente_turno(jugadores, "dia") # <-- CAMBIADA
+    estado_siguiente = calcular_siguiente_turno(jugadores, "dia")
 
-    if not hubo_empate and nombre_linchado != "abstencion":
+    if hay_mayoria and nombre_linchado != "abstencion":
         muertos_por_linchamiento.add(nombre_linchado)
-        
-        #El suicidio de Cupido 
+
+        # El suicidio de Cupido
         jugador_linchado = next(j for j in jugadores if j["nombre"] == nombre_linchado)
         if jugador_linchado.get("enamorado"):
             for j in jugadores:
                 if j.get("enamorado") and j["nombre"] != nombre_linchado:
                     muertos_por_linchamiento.add(j["nombre"])
 
-        # El Cazador 
+        # El Cazador
         for nombre in muertos_por_linchamiento:
             jug_temp = next(j for j in jugadores if j["nombre"] == nombre)
             if jug_temp["rol"] == "Cazador":
@@ -842,17 +879,16 @@ async def votar_dia(datos: AccionVotoDiaRequest):
         for j in jugadores:
             if j["nombre"] in muertos_por_linchamiento:
                 j["vivo"] = False
-                j["ciclo_muerte"] = sala.get("ciclo", 1)
+                j["ciclo_muerte"] = ciclo_actual
 
     # VICTORIA
-   
     victoria = verificar_victoria(jugadores)
 
     update_op = {
         "$set": {
             "estado": estado_siguiente,
             "jugadores": jugadores,
-            "ultimo_linchado": list(muertos_por_linchamiento) if not hubo_empate else []
+            "ultimo_linchado": list(muertos_por_linchamiento) if hay_mayoria else []
         },
         "$unset": {
             "votos_dia": ""
@@ -866,8 +902,8 @@ async def votar_dia(datos: AccionVotoDiaRequest):
     await db.partidas.update_one({"codigo_sala": datos.codigo_sala}, update_op)
 
     mensaje_final = "El pueblo ha hablado. "
-    if hubo_empate:
-        mensaje_final += "Nadie es linchado hoy."
+    if not hay_mayoria or nombre_linchado == "abstencion":
+        mensaje_final += "Nadie alcanzó la mayoría absoluta. Nadie es linchado hoy."
     else:
         mensaje_final += f"{nombre_linchado} ha sido linchado. "
 
@@ -922,7 +958,12 @@ async def accion_cazador(datos: AccionCazadorRequest):
         # Disparo nocturno sin victoria: un paso extra explícito antes de que amanezca
         estado_siguiente = "esperando_narrador_amanecer"
 
-    update_op = {"$set": {"estado": estado_siguiente, "jugadores": jugadores}}
+    update_op = {"$set": {
+        "estado": estado_siguiente, 
+        "jugadores": jugadores,
+        "victima_cazador": datos.nombre_objetivo
+    }}
+
     if victoria:
         update_op["$set"]["victoria_pendiente"] = victoria
     else:

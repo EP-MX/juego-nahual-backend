@@ -15,8 +15,8 @@
     <button class="logout-btn" onclick="document.getElementById('modal-reglas').style.display='flex'">Reglas</button>
     <button class="logout-btn" onclick="salirDePartida()">Cerrar sesión</button>
 
-    <button class="logout-btn" onclick="mostrarTransicionCiclo('noche')">🌙</button>
-    <button class="logout-btn" onclick="mostrarTransicionCiclo('dia')">☀️</button>
+    <!--<button class="logout-btn" onclick="mostrarTransicionCiclo('noche')">🌙</button>-->
+    <!--<button class="logout-btn" onclick="mostrarTransicionCiclo('dia')">☀️</button>-->
 
     <!-- <button class="logout-btn" onclick="activarScreamer('test_' + Date.now())" style="background:rgba(230,57,70,0.15); color:var(--blood-light); border:1px solid rgba(230,57,70,0.4);">
   Test
@@ -62,7 +62,7 @@
     </div>
   </div>
 
-  <!-- ✅ AQUÍ AGREGAMOS EL CONTENEDOR EXCLUSIVO PARA EL QR -->
+  <!--  AQUÍ AGREGAMOS EL CONTENEDOR EXCLUSIVO PARA EL QR -->
   <div id="contenedor-qr-sala" style="display: none; text-align: center; margin-bottom: 24px;"></div>
 
   <h3 id="titulo-jugadores" style="margin-top: 22px;">Reunidos en el pueblo</h3>
@@ -149,26 +149,6 @@
         let intervaloActualizacion;
         let pollingPausado = false;
 
-        // codigo qr 
-        window.addEventListener('DOMContentLoaded', (event) => {
-            // Leemos la barra de direcciones del navegador
-            const parametros = new URLSearchParams(window.location.search);
-            const salaEscaneada = parametros.get("sala"); // Busca si dice ?sala=ALGO
-
-                if (salaEscaneada) {
-                    // Reemplaza 'input-codigo-sala' por el ID real que tenga tu cuadro de texto donde escriben el código
-                    const inputSala = document.getElementById("input-codigo-sala"); 
-                        
-                    if (inputSala) {
-                        inputSala.value = salaEscaneada.toUpperCase(); // Escribe el código automáticamente
-                            
-                        // (Opcional) Si tienes tu menú dividido en "Pantalla de inicio" y "Pantalla para unirse", 
-                        // aquí podrías ocultar el inicio y mostrar directamente el formulario de unirse 
-                        // para que el jugador solo tenga que escribir su nombre.
-                    }
-                }
-        });
-            //codigo qr
 
         // --- Historial persistente de la partida (vive mientras no recargues la página) ---
         let historialEventos = [];
@@ -177,27 +157,88 @@
         function registrarHistorialSiNuevo(sala) {
             const ciclo = sala.ciclo || 1;
 
+            // 1. EVENTO CUPIDO (Se registra en cuanto termina su turno)
+            const claveCupido = `cupido_${ciclo}`;
+            if (!historialClavesRegistradas.has(claveCupido) && sala.estado !== "turno_cupido" && sala.estado !== "esperando_jugadores") {
+                const enamorados = sala.jugadores.filter(j => j.enamorado).map(j => j.nombre);
+                if (enamorados.length === 2) {
+                    historialClavesRegistradas.add(claveCupido);
+                    historialEventos.push(` <strong>Cupido</strong> flechó a <strong style="color:#EC4899;">${enamorados[0]}</strong> y <strong style="color:#EC4899;">${enamorados[1]}</strong>.`);
+                }
+            }
+
+            // 2. EVENTO VIDENTE (Requiere que el backend envíe 'sala.reporte_vidente')
+            const claveVidente = `vidente_${ciclo}`;
+            if (!historialClavesRegistradas.has(claveVidente) && ["turno_lobos", "confirmando_lobos", "turno_bruja", "esperando_narrador_dia", "dia"].includes(sala.estado)) {
+                historialClavesRegistradas.add(claveVidente);
+                if (sala.reporte_vidente) {
+                    historialEventos.push(` <strong>La Vidente</strong> investigó a <strong>${sala.reporte_vidente.objetivo}</strong> y descubrió que es ${sala.reporte_vidente.rol}.`);
+                }
+            }
+
+            // 3. EVENTO LOBOS Y NIÑA (Se registra cuando los lobos terminan)
+            const claveLobos = `lobos_${ciclo}`;
+            if (!historialClavesRegistradas.has(claveLobos) && ["turno_bruja", "esperando_narrador_dia", "turno_cazador", "esperando_narrador_amanecer", "dia"].includes(sala.estado)) {
+                historialClavesRegistradas.add(claveLobos);
+                
+                // Acción de la Niña
+                const nina = sala.jugadores.find(j => j.rol === "Niña");
+                if (nina && nina.espio_esta_noche) {
+                    if (sala.nina_atrapada) {
+                        historialEventos.push(` <strong>La Niña</strong> (${nina.nombre}) espió a los lobos y <strong style="color:var(--blood-red);">fue descubierta</strong>.`);
+                    } else {
+                        historialEventos.push(` <strong>La Niña</strong> (${nina.nombre}) espió a los lobos con éxito y sin ser vista.`);
+                    }
+                }
+
+                // Acción de los Lobos
+                if (sala.victima_lobos) {
+                    historialEventos.push(` <strong>Los Lobos</strong> intentaron cazar a <strong style="color:var(--blood-light);">${sala.victima_lobos}</strong>.`);
+                }
+            }
+
+            // 4. EVENTO BRUJA (Requiere que el backend envíe 'sala.reporte_bruja')
+            const claveBruja = `bruja_${ciclo}`;
+            if (!historialClavesRegistradas.has(claveBruja) && ["esperando_narrador_dia", "turno_cazador", "esperando_narrador_amanecer", "dia"].includes(sala.estado)) {
+                historialClavesRegistradas.add(claveBruja);
+                if (sala.reporte_bruja) {
+                    if (sala.reporte_bruja.salvo) historialEventos.push(` <strong>La Bruja</strong> usó su poción de VIDA para salvar a <strong>${sala.reporte_bruja.salvo}</strong>.`);
+                    if (sala.reporte_bruja.mato) historialEventos.push(` <strong>La Bruja</strong> usó su poción de MUERTE en <strong>${sala.reporte_bruja.mato}</strong>.`);
+                }
+            }
+
+            // 5. RESUMEN DE MUERTES DE LA NOCHE
             const claveNoche = `noche_${ciclo}`;
             if (!historialClavesRegistradas.has(claveNoche) &&
                 ["esperando_narrador_dia", "turno_cazador", "esperando_narrador_amanecer", "dia"].includes(sala.estado)) {
                 const muertes = sala.reporte_muertes || [];
                 historialClavesRegistradas.add(claveNoche);
-                historialEventos.push(
-                    muertes.length > 0
-                        ? ` Noche ${ciclo}: murieron <strong>${muertes.join(", ")}</strong>.`
-                        : ` Noche ${ciclo}: nadie murió.`
-                );
+                if (muertes.length > 0) {
+                    historialEventos.push(` <strong>Resumen Noche ${ciclo}:</strong> Murieron <strong>${muertes.join(", ")}</strong>.`);
+                } else {
+                    historialEventos.push(` <strong>Resumen Noche ${ciclo}:</strong> Nadie murió esta noche.`);
+                }
             }
 
+            // 6. EVENTO CAZADOR (Requiere que el backend envíe 'sala.victima_cazador')
+            const claveCazador = `cazador_${ciclo}`;
+            if (!historialClavesRegistradas.has(claveCazador) && ["esperando_narrador_amanecer", "dia", "esperando_narrador_noche"].includes(sala.estado)) {
+                historialClavesRegistradas.add(claveCazador);
+                if (sala.victima_cazador) {
+                    historialEventos.push(` <strong>El Cazador</strong> en su último aliento disparó a <strong style="color:var(--blood-light);">${sala.victima_cazador}</strong>.`);
+                }
+            }
+
+            // 7. EVENTO DÍA (Linchamiento)
             const claveDia = `dia_${ciclo}`;
             if (!historialClavesRegistradas.has(claveDia) && sala.estado === "esperando_narrador_noche") {
                 const linchados = sala.ultimo_linchado || [];
                 historialClavesRegistradas.add(claveDia);
-                historialEventos.push(
-                    linchados.length > 0
-                        ? ` Día ${ciclo}: el pueblo linchó a <strong>${linchados.join(", ")}</strong>.`
-                        : ` Día ${ciclo}: hubo empate, nadie fue linchado.`
-                );
+                if (linchados.length > 0) {
+                    historialEventos.push(` <strong>Día ${ciclo}:</strong> El pueblo linchó a <strong style="color:var(--blood-red);">${linchados.join(", ")}</strong>.`);
+                } else {
+                    historialEventos.push(` <strong>Día ${ciclo}:</strong> Hubo empate o abstención, nadie fue linchado.`);
+                }
             }
         }
 
@@ -746,6 +787,25 @@ if (respuesta.status === 404) {
             const soyMuertoAntesControles = !estoyVivo && (miJugador?.ciclo_muerte || 0) < cicloCurrent;
             const mostrarComoMuertoEnControles = soyMuertoAntesControles || (!estoyVivo && !(soyMuertoEsteCicloControles && estadosNocturnosOcultos.includes(sala.estado)));
 
+            const qrContainer = document.getElementById("contenedor-qr-sala");
+            if (qrContainer) {
+                if (esNarrador && sala.estado === "esperando_jugadores") {
+                    qrContainer.style.display = "block"; // Lo mostramos
+                    
+                    if (qrContainer.innerHTML === "") { // Solo lo dibujamos una vez
+                        const urlBase = "https://incredible-cupcake-22a8f8.netlify.app/"; // <-- website base donde se aloja el juego
+                        const urlInvitacion = encodeURIComponent(`${urlBase}?sala=${miSala}`);
+                        qrContainer.innerHTML = `
+                            <p style="color:var(--text-mute); font-size: 0.85rem; margin-bottom: 12px;">Escanea este código para unirte a la sala:</p>
+                            <div style="background: white; padding: 12px; border-radius: 8px; display: inline-block;">
+                                <img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${urlInvitacion}" width="150" height="150" alt="QR Sala">
+                            </div>
+                        `;
+                    }
+                } else {
+                    qrContainer.style.display = "none"; // Lo ocultamos cuando el juego empiece
+                }
+            }
 
             if (mostrarComoMuertoEnControles && sala.estado !== "turno_cazador" && sala.estado !== "victoria_lobos" && sala.estado !== "victoria_aldeanos") {
                 controlesHTML += `<p>Estás muerto. Observa en silencio.</p>`;
@@ -758,7 +818,7 @@ if (respuesta.status === 404) {
                     controlesHTML += `<button onclick="seleccionarEnamorado('${j.nombre}')">${j.nombre}</button> `;
                 });
                 controlesHTML += `<p id="seleccion-cupido"></p>
-                                <button id="btn-confirmar-cupido" style="display:none; background: #00ff00; color: black;" onclick="enviarCupido()">Lanzar Flechas</button>`;
+                                <button id="btn-confirmar-cupido" style="display:none; background: rgba(236, 72, 153, 0.15); color: #EC4899; border: 1px solid #EC4899; font-weight: bold;" onclick="enviarCupido()">Lanzar Flechas</button>`;
             } 
             // TURNO: VIDENTE (Faltaba en la nueva)
             else if (sala.estado === "turno_vidente" && miRol === "Vidente") {
@@ -826,7 +886,7 @@ if (respuesta.status === 404) {
             // CONFIRMACION LOBOS
             else if (sala.estado === "confirmando_lobos" && miRol === "Hombre Lobo") {
                 if (sala.nina_atrapada) {
-                    controlesHTML += `<p style="color:var(--blood-light); font-size:1.3rem; font-weight:bold; text-align:center;">🐺 ¡Se descubrió a ${sala.victima_lobos} espiando!</p>`;
+                    controlesHTML += `<p style="color:var(--blood-light); font-size:1.3rem; font-weight:bold; text-align:center;"> ¡Se descubrió a ${sala.victima_lobos} espiando!</p>`;
                     controlesHTML += `<p style="color:var(--daylight); text-align:center; font-style:italic;">Su curiosidad le ha costado caro... será devorada esta noche.</p>`;
                 } else {
                     const votosLobos = sala.votos_lobos || [];
@@ -950,28 +1010,7 @@ if (respuesta.status === 404) {
                                 <h3>Ganadores: ${ganador}</h3>
                                 <button onclick="location.reload()">Jugar otra vez</button>`;
             } 
-            // --- CONTROL DEL QR EN LA PARTE SUPERIOR ---
-            const qrContainer = document.getElementById("contenedor-qr-sala");
-            if (qrContainer) {
-                if (esNarrador && sala.estado === "esperando_jugadores") {
-                    qrContainer.style.display = "block"; // Lo mostramos
-                    
-                    if (qrContainer.innerHTML === "") { // Solo lo dibujamos una vez
-                        const urlBase = "https://incredible-cupcake-22a8f8.netlify.app/"; // <-- website base donde se aloja el juego
-                        const urlInvitacion = encodeURIComponent(`${urlBase}?sala=${miSala}`);
-                        qrContainer.innerHTML = `
-                            <p style="color:var(--text-mute); font-size: 0.85rem; margin-bottom: 12px;">Escanea este código para unirte a la sala:</p>
-                            <div style="background: white; padding: 12px; border-radius: 8px; display: inline-block;">
-                                <img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${urlInvitacion}" width="150" height="150" alt="QR Sala">
-                            </div>
-                        `;
-                    }
-                } else {
-                    qrContainer.style.display = "none"; // Lo ocultamos cuando el juego empiece
-                }
-            }
-            // -------------------------------------------
-
+            
             // PANEL DEL NARRADOR
             else if (miRol === "narrador") {
                 if (sala.estado === "esperando_jugadores") {
@@ -979,246 +1018,246 @@ if (respuesta.status === 404) {
                     controlesHTML += ``; 
                 } else {
 
-        const diaActual = sala.ciclo || 1;
-        controlesHTML += `<p class="overline" style="text-align: center; margin-bottom: 18px; border-bottom: 1px solid var(--border-subtle); padding-bottom: 12px;">
-            Noches en el Pueblo · ${diaActual}
-        </p>`;
+                    const diaActual = sala.ciclo || 1;
+                    controlesHTML += `<p class="overline" style="text-align: center; margin-bottom: 18px; border-bottom: 1px solid var(--border-subtle); padding-bottom: 12px;">
+                        Noches en el Pueblo · ${diaActual}
+                    </p>`;
 
-        // BALANCE DE PODER
-        const lobosVivosCount = sala.jugadores.filter(j => j.rol === "Hombre Lobo" && j.vivo).length;
-        const aldeanosVivosCount = sala.jugadores.filter(j => j.rol !== "Hombre Lobo" && j.rol !== "narrador" && j.vivo).length;
-        const totalVivos = lobosVivosCount + aldeanosVivosCount;
-        const pctLobos = totalVivos > 0 ? (lobosVivosCount / totalVivos * 100) : 0;
-        controlesHTML += `
-        <div style="margin-bottom:18px;">
-            <div style="display:flex; justify-content:space-between; font-size:0.7rem; color:var(--text-mute); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:4px;">
-                <span>Lobos: ${lobosVivosCount}</span>
-                <span>Aldeanos: ${aldeanosVivosCount}</span>
-            </div>
-            <div style="height:8px; border-radius:4px; overflow:hidden; background:var(--emerald); display:flex;">
-                <div style="width:${pctLobos}%; background:var(--blood-red);"></div>
-            </div>
-            ${lobosVivosCount >= aldeanosVivosCount && totalVivos > 0 ? `<p style="color:var(--blood-light); font-size:0.75rem; text-align:center; margin-top:6px;"> Los lobos están en paridad o mayoría — la próxima muerte puede terminar el juego.</p>` : ''}
-        </div>`;
+                    // BALANCE DE PODER
+                    const lobosVivosCount = sala.jugadores.filter(j => j.rol === "Hombre Lobo" && j.vivo).length;
+                    const aldeanosVivosCount = sala.jugadores.filter(j => j.rol !== "Hombre Lobo" && j.rol !== "narrador" && j.vivo).length;
+                    const totalVivos = lobosVivosCount + aldeanosVivosCount;
+                    const pctLobos = totalVivos > 0 ? (lobosVivosCount / totalVivos * 100) : 0;
+                    controlesHTML += `
+                    <div style="margin-bottom:18px;">
+                        <div style="display:flex; justify-content:space-between; font-size:0.7rem; color:var(--text-mute); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:4px;">
+                            <span>Lobos: ${lobosVivosCount}</span>
+                            <span>Aldeanos: ${aldeanosVivosCount}</span>
+                        </div>
+                        <div style="height:8px; border-radius:4px; overflow:hidden; background:var(--emerald); display:flex;">
+                            <div style="width:${pctLobos}%; background:var(--blood-red);"></div>
+                        </div>
+                        ${lobosVivosCount >= aldeanosVivosCount && totalVivos > 0 ? `<p style="color:var(--blood-light); font-size:0.75rem; text-align:center; margin-top:6px;"> Los lobos están en paridad o mayoría — la próxima muerte puede terminar el juego.</p>` : ''}
+                    </div>`;
 
-        // REGISTRO GENERAL (reemplaza la lista vieja de jugadores)
-        controlesHTML += `
-        <div style="background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; padding: 14px; margin-bottom: 20px; box-shadow: inset 0 2px 10px rgba(0,0,0,0.5);">
-            <p class="overline" style="margin-top: 0; color: var(--moonlight); border-bottom: 1px solid rgba(142,202,230,0.2); padding-bottom: 6px;"> Registro General</p>
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">`;
+                    // REGISTRO GENERAL (reemplaza la lista vieja de jugadores)
+                    controlesHTML += `
+                    <div style="background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; padding: 14px; margin-bottom: 20px; box-shadow: inset 0 2px 10px rgba(0,0,0,0.5);">
+                        <p class="overline" style="margin-top: 0; color: var(--moonlight); border-bottom: 1px solid rgba(142,202,230,0.2); padding-bottom: 6px;"> Registro General</p>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">`;
 
-        sala.jugadores.filter(j => j.rol !== 'narrador').forEach(j => {
-            const colorVivo = j.vivo ? "#fff" : "var(--blood-red)";
-            const opacidad = j.vivo ? "1" : "0.5";
-            const tachado = j.vivo ? "none" : "line-through";
-            const iconoMuerto = j.vivo ? "" : " muerto";
-            const iconoAmor = j.enamorado ? " enamorado" : "";
-            const iconoEspia = (j.rol === "Niña" && j.espio_esta_noche) ? " espio" : "";
+                    sala.jugadores.filter(j => j.rol !== 'narrador').forEach(j => {
+                        const colorVivo = j.vivo ? "#fff" : "var(--blood-red)";
+                        const opacidad = j.vivo ? "1" : "0.5";
+                        const tachado = j.vivo ? "none" : "line-through";
+                        const iconoMuerto = j.vivo ? "" : " muerto";
+                        const iconoAmor = j.enamorado ? " enamorado" : "";
+                        const iconoEspia = (j.rol === "Niña" && j.espio_esta_noche) ? " espio" : "";
 
-            let colorBorde = "var(--emerald)";
-            if (j.rol === "Hombre Lobo") colorBorde = "var(--blood-light)";
-            else if (["Vidente", "Bruja", "Cupido", "Cazador", "Niña"].includes(j.rol)) colorBorde = "var(--daylight)";
+                        let colorBorde = "var(--emerald)";
+                        if (j.rol === "Hombre Lobo") colorBorde = "var(--blood-light)";
+                        else if (["Vidente", "Bruja", "Cupido", "Cazador", "Niña"].includes(j.rol)) colorBorde = "var(--daylight)";
 
-            controlesHTML += `
-            <div style="background: rgba(255,255,255,0.03); border-left: 3px solid ${colorBorde}; padding: 6px 10px; border-radius: 3px; opacity: ${opacidad};">
-                <strong style="color: ${colorVivo}; text-decoration: ${tachado}; font-size: 0.95rem;">${j.nombre}${iconoMuerto}${iconoAmor}${iconoEspia}</strong><br>
-                <span style="color: var(--text-mute); font-family: 'Space Mono', monospace; font-size: 0.65rem; text-transform: uppercase;">${j.rol}</span>
-            </div>`;
-        });
-        controlesHTML += `</div></div>`;
+                        controlesHTML += `
+                        <div style="background: rgba(255,255,255,0.03); border-left: 3px solid ${colorBorde}; padding: 6px 10px; border-radius: 3px; opacity: ${opacidad};">
+                            <strong style="color: ${colorVivo}; text-decoration: ${tachado}; font-size: 0.95rem;">${j.nombre}${iconoMuerto}${iconoAmor}${iconoEspia}</strong><br>
+                            <span style="color: var(--text-mute); font-family: 'Space Mono', monospace; font-size: 0.65rem; text-transform: uppercase;">${j.rol}</span>
+                        </div>`;
+                    });
+                    controlesHTML += `</div></div>`;
 
-        // ALERTA: Niña espiando
-        const ninaViva = sala.jugadores.find(j => j.rol === "Niña" && j.vivo);
-        if (ninaViva && ninaViva.espio_esta_noche && (sala.estado === "turno_lobos" || sala.estado === "confirmando_lobos")) {
-            controlesHTML += `
-            <div style="background: rgba(230,57,70,0.15); border: 1px dashed var(--blood-light); padding: 12px; border-radius: 4px; margin-bottom: 16px; text-align: center; animation: pulse 1.5s infinite;">
-                <span style="font-size: 1.2rem;">""</span><br>
-                <strong style="color: var(--blood-light); font-size: 0.9rem;">¡ALERTA! La Niña (${ninaViva.nombre}) está espiando esta noche.</strong>
-            </div>`;
-        }
+                    // ALERTA: Niña espiando
+                    const ninaViva = sala.jugadores.find(j => j.rol === "Niña" && j.vivo);
+                    if (ninaViva && ninaViva.espio_esta_noche && (sala.estado === "turno_lobos" || sala.estado === "confirmando_lobos")) {
+                        controlesHTML += `
+                        <div style="background: rgba(230,57,70,0.15); border: 1px dashed var(--blood-light); padding: 12px; border-radius: 4px; margin-bottom: 16px; text-align: center; animation: pulse 1.5s infinite;">
+                            <span style="font-size: 1.2rem;"></span><br>
+                            <strong style="color: var(--blood-light); font-size: 0.9rem;">¡ALERTA! La Niña (${ninaViva.nombre}) está espiando esta noche.</strong>
+                        </div>`;
+                    }
 
-        // Enamorados + Bruja, lado a lado
-        const enamorados = sala.jugadores.filter(j => j.enamorado);
-        const bruja = sala.jugadores.find(j => j.rol === "Bruja");
-        if (enamorados.length > 0 || bruja) {
-            controlesHTML += `<div style="display:flex; gap:12px; margin-bottom: 20px; flex-wrap:wrap;">`;
-            if (enamorados.length > 0) {
-                const vivos1 = enamorados[0].vivo ? "#fff" : "var(--blood-red)";
-                const vivos2 = enamorados[1] ? (enamorados[1].vivo ? "#fff" : "var(--blood-red)") : "#fff";
-                controlesHTML += `
-                <div style="flex:1; min-width:140px; background: rgba(0,0,0,0.25); border-left: 2px solid #EC4899; padding: 10px; border-radius: 4px;">
-                    <span style="color: #EC4899; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.1em; display:block; margin-bottom:4px;">Enamorados</span>
-                    <span style="color:${vivos1}; font-size: 0.85rem;">${enamorados[0].nombre}</span>${enamorados[1] ? ` & <span style="color:${vivos2}; font-size: 0.85rem;">${enamorados[1].nombre}</span>` : ''}
-                </div>`;
+                    // Enamorados + Bruja, lado a lado
+                    const enamorados = sala.jugadores.filter(j => j.enamorado);
+                    const bruja = sala.jugadores.find(j => j.rol === "Bruja");
+                    if (enamorados.length > 0 || bruja) {
+                        controlesHTML += `<div style="display:flex; gap:12px; margin-bottom: 20px; flex-wrap:wrap;">`;
+                        if (enamorados.length > 0) {
+                            const vivos1 = enamorados[0].vivo ? "#fff" : "var(--blood-red)";
+                            const vivos2 = enamorados[1] ? (enamorados[1].vivo ? "#fff" : "var(--blood-red)") : "#fff";
+                            controlesHTML += `
+                            <div style="flex:1; min-width:140px; background: rgba(0,0,0,0.25); border-left: 2px solid #EC4899; padding: 10px; border-radius: 4px;">
+                                <span style="color: #EC4899; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.1em; display:block; margin-bottom:4px;">Enamorados</span>
+                                <span style="color:${vivos1}; font-size: 0.85rem;">${enamorados[0].nombre}</span>${enamorados[1] ? ` & <span style="color:${vivos2}; font-size: 0.85rem;">${enamorados[1].nombre}</span>` : ''}
+                            </div>`;
+                        }
+                        if (bruja) {
+                            const pVida = bruja.pocion_vida ? `<span style="color:var(--emerald)">✓</span>` : `<span style="color:var(--blood-light)">✗</span>`;
+                            const pMuerte = bruja.pocion_muerte ? `<span style="color:var(--emerald)">✓</span>` : `<span style="color:var(--blood-light)">✗</span>`;
+                            const estadoBruja = bruja.vivo ? "Viva" : "Muerta";
+                            controlesHTML += `
+                            <div style="flex:1; min-width:140px; background: rgba(0,0,0,0.25); border-left: 2px solid var(--violet); padding: 10px; border-radius: 4px;">
+                                <span style="color: var(--violet); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.1em; display:block; margin-bottom:4px;">Bruja (${estadoBruja})</span>
+                                <span style="font-size: 0.85rem; color: #fff;">Vida: ${pVida} | Muerte: ${pMuerte}</span>
+                            </div>`;
+                        }
+                        controlesHTML += `</div>`;
+                    }
+
+                    // ZONA DE ACCIÓN EN VIVO
+                    //controlesHTML += `<p class="overline" style="color: var(--daylight); border-bottom: 1px solid rgba(245, 158, 11, 0.2); padding-bottom: 6px;"> En vivo: ${sala.estado.replace(/_/g, ' ').toUpperCase()}</p>`;
+
+                    if (sala.estado === "turno_cupido") {
+                        const cupido = sala.jugadores.find(j => j.rol === "Cupido");
+                        controlesHTML += `<div style="background: rgba(236,72,153,0.08); border: 1px dashed #EC4899; padding: 12px; border-radius: 4px; margin-bottom: 16px; text-align:center;">
+                            <span style="font-size:1.2rem;">enamorados</span><br>
+                            <span style="color:#EC4899; font-size:0.9rem;">Esperando a que <strong>${cupido ? cupido.nombre : "Cupido"}</strong> elija a los enamorados...</span>
+                        </div>`;
+                    }
+
+                    else if (sala.estado === "turno_vidente") {
+                        const vidente = sala.jugadores.find(j => j.rol === "Vidente" && j.vivo);
+                        controlesHTML += `<div style="background: rgba(142,202,230,0.08); border: 1px dashed var(--moonlight); padding: 12px; border-radius: 4px; margin-bottom: 16px; text-align:center;">
+                            <span style="font-size:1.2rem;">revelacion</span><br>
+                            <span style="color:var(--moonlight); font-size:0.9rem;">Esperando a que <strong>${vidente ? vidente.nombre : "la Vidente"}</strong> investigue a alguien...</span>
+                        </div>`;
+                    }
+
+                    else if (sala.estado === "turno_lobos" || sala.estado === "confirmando_lobos") {
+                        const votosLobos = sala.votos_lobos || [];
+                        const lobosVivos = sala.jugadores.filter(j => j.rol === 'Hombre Lobo' && j.vivo);
+                        controlesHTML += `<div style="background: rgba(255,255,255,0.03); border: 1px dashed rgba(230,57,70,0.3); padding: 12px; border-radius: 4px; margin-bottom: 16px;">`;
+                        controlesHTML += `<p style="margin:0 0 10px 0; color:var(--text-primary); font-size:0.9rem;"> <strong>El debate de la manada:</strong></p>`;
+                        lobosVivos.forEach(lobo => {
+                            const voto = votosLobos.find(v => v.lobo === lobo.nombre);
+                            const textoVoto = voto ? `<strong style="color:var(--blood-light);">${voto.voto}</strong>` : `<span style="color:var(--text-mute); font-style:italic;">decidiendo...</span>`;
+                            controlesHTML += `<p style="margin: 4px 0; font-size: 0.95rem;">${lobo.nombre} ➔ ${textoVoto}</p>`;
+                        });
+                        controlesHTML += `</div>`;
+                    }
+
+                    else if (sala.estado === "turno_bruja") {
+                        const brujaViva = sala.jugadores.find(j => j.rol === "Bruja" && j.vivo);
+                        const victima = sala.victima_lobos;
+                        controlesHTML += `<div style="background: rgba(167,139,250,0.08); border: 1px dashed var(--violet); padding: 12px; border-radius: 4px; margin-bottom: 16px; text-align:center;">
+                            <span style="font-size:1.2rem;">pocion</span><br>
+                            <span style="color:var(--violet); font-size:0.9rem;">Los lobos eligieron a <strong>${victima ?? "nadie"}</strong>. Esperando la decisión de <strong>${brujaViva ? brujaViva.nombre : "la Bruja"}</strong>...</span>
+                        </div>`;
+                    }
+
+                    else if (sala.estado === "esperando_narrador_dia") {
+                        const reporteMuertes = sala.reporte_muertes || [];
+                        const cazadorMurioEstaNoche = sala.jugadores.some(j => j.rol === "Cazador" && reporteMuertes.includes(j.nombre));
+
+                        controlesHTML += `
+                        <div style="background: linear-gradient(180deg, rgba(20,30,40,0.8) 0%, rgba(10,15,20,0.9) 100%); border: 1px solid var(--moonlight); padding: 16px; border-radius: 6px; margin-bottom: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+                            <h3 style="margin-top:0; color:var(--moonlight); border-bottom:1px solid rgba(142,202,230,0.2); padding-bottom:8px; font-size:1.3rem;"> Guion del Amanecer</h3>
+                            <p style="color:var(--text-mute); font-size:0.8rem; text-transform:uppercase; margin-bottom:12px;">Lee esto en voz alta:</p>`;
+
+                        if (reporteMuertes.length > 0) {
+                            controlesHTML += `<p style="font-size: 1.15rem; font-style: italic; color: #fff; line-height: 1.6;">"La aldea despierta... pero una espesa bruma trae olor a sangre. Esta noche, la tragedia se ha llevado a <strong>${reporteMuertes.length}</strong> de los nuestros..."</p>`;
+                            controlesHTML += `<div style="background:rgba(0,0,0,0.4); padding:10px; border-radius:4px; margin-top:12px;">`;
+                            reporteMuertes.forEach(nombreMuerto => {
+                                const jMuerto = sala.jugadores.find(j => j.nombre === nombreMuerto);
+                                let nota = "Asesinato";
+                                if (jMuerto?.enamorado) nota += " o Suicidio por amor";
+                                controlesHTML += `<p style="margin:6px 0; font-size:1rem;"><strong style="color:var(--blood-light);">${nombreMuerto}</strong> <span style="color:var(--text-mute); font-size:0.85rem;">(Era: <strong style="color:var(--daylight);">${jMuerto ? jMuerto.rol : '?'}</strong>)</span> <br><span style="color:gray; font-size:0.75rem;">Causa: ${nota}</span></p>`;
+                            });
+                            controlesHTML += `</div>`;
+                        } else {
+                            controlesHTML += `<p style="font-size: 1.15rem; font-style: italic; color: var(--emerald); line-height: 1.6;">"Abran los ojos. Un milagro ha ocurrido... A pesar de los aullidos en la oscuridad y el peligro acechante, <strong>todos</strong> han logrado sobrevivir esta noche."</p>`;
+                        }
+                        controlesHTML += `</div>`;
+
+                        if (sala.victoria_pendiente) {
+                            controlesHTML += `
+                            <div style="background: linear-gradient(180deg, rgba(245,158,11,0.15), rgba(230,57,70,0.1)); border: 1px solid var(--daylight); padding: 16px; border-radius: 6px; text-align:center;">
+                                <p style="color:var(--daylight); font-weight:bold; margin:0 0 10px 0;"> Esto termina la partida. Narra el desenlace con calma y, cuando estés listo:</p>
+                                <button style="background:var(--daylight); color:#000; width:100%; font-weight:bold;" onclick="revelarResultado()"> Revelar resultado final</button>
+                            </div>`;
+                        } else if (cazadorMurioEstaNoche) {
+                            controlesHTML += `<p style="color:var(--daylight); text-align:center; font-style:italic;">El Cazador ha caído. Anúncialo y dale su turno:</p>`;
+                            controlesHTML += `<button style="background:var(--daylight); color:#000; width:100%; margin-top:8px; font-weight:bold;" onclick="anunciarDia()">Dar Turno al Cazador </button>`;
+                        } else {
+                            controlesHTML += `<button style="background:var(--daylight); color:#000; width:100%; margin-top:8px; font-weight:bold;" onclick="anunciarDia()"> Declarar que es de Día</button>`;
+                        }
+                    }
+
+                    else if (sala.estado === "turno_cazador") {
+                        controlesHTML += `<p style="color:var(--daylight); font-style:italic; text-align:center;">El Cazador está agonizando y a punto de disparar... espera su decisión.</p>`;
+                    }
+
+                    else if (sala.estado === "esperando_narrador_amanecer") {
+                        controlesHTML += `<p style="color:var(--text-mute); text-align:center;">El disparo ha sonado. Ya puedes declarar el amanecer.</p>`;
+                        controlesHTML += `<button style="background:var(--daylight); color:#000; width:100%; font-weight:bold; margin-top:10px;" onclick="anunciarAmanecer()"> Que amanezca</button>`;
+                    }
+
+                    else if (sala.estado === "dia") {
+                        const votosDia = sala.votos_dia || [];
+                        const jugadoresVivos = sala.jugadores.filter(j => j.vivo && j.rol !== "narrador");
+                        controlesHTML += `<div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-subtle); padding: 14px; border-radius: 4px;">`;
+                        controlesHTML += `<p style="margin-top:0; color:var(--text-mute); font-size:0.85rem;">Votos emitidos: <strong style="color:#fff;">${votosDia.length} / ${jugadoresVivos.length}</strong></p>`;
+                        const conteo = {};
+                        votosDia.forEach(v => { conteo[v.acusado] = (conteo[v.acusado] || 0) + v.peso; });
+                        sala.jugadores.filter(j => j.vivo && j.rol !== 'narrador').forEach(j => {
+                            const votos = conteo[j.nombre] || 0;
+                            const barra = votos > 0
+                                ? `<span style="color:var(--daylight); font-weight:bold;">${'█'.repeat(votos)} ${votos}</span>`
+                                : `<span style="color:var(--text-mute); font-size:0.8rem;">0</span>`;
+                            controlesHTML += `<div style="display:flex; justify-content:space-between; margin-bottom:6px; font-size:0.95rem;"><span>${j.nombre}</span> ${barra}</div>`;
+                        });
+                        const votosAbs = conteo['abstencion'] || 0;
+                        if (votosAbs > 0) {
+                            controlesHTML += `<div style="display:flex; justify-content:space-between; margin-top:10px; padding-top:10px; border-top:1px solid rgba(255,255,255,0.1); font-size:0.95rem;">
+                                <span style="color:var(--text-mute)">Abstención</span>
+                                <span style="color:var(--daylight); font-weight:bold;">${'█'.repeat(votosAbs)} ${votosAbs}</span>
+                            </div>`;
+                        }
+                        controlesHTML += `</div>`;
+                    }
+
+                    else if (sala.estado === "esperando_narrador_noche") {
+                        const ultimoLinchado = sala.ultimo_linchado || [];
+
+                        controlesHTML += `<div style="background: rgba(20,20,30,0.8); border: 1px solid var(--moonlight); padding: 16px; border-radius: 6px; margin-bottom: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);">`;
+                        controlesHTML += `<h3 style="margin-top:0; color:var(--moonlight); border-bottom:1px solid rgba(142,202,230,0.2); padding-bottom:8px; font-size:1.3rem;"> Votacion del Pueblo</h3>`;
+
+                        if (ultimoLinchado.length > 0) {
+                            controlesHTML += `<p style="font-size: 1.15rem; font-style: italic; color: #fff; line-height: 1.6;">"La aldea ha tomado una decisión. Hoy, el pueblo ha decidido ejecutar a..."</p>`;
+                            controlesHTML += `<div style="background:rgba(0,0,0,0.4); padding:10px; border-radius:4px; margin-top:12px;">`;
+                            ultimoLinchado.forEach(nombreMuerto => {
+                                const jMuerto = sala.jugadores.find(j => j.nombre === nombreMuerto);
+                                controlesHTML += `<p style="margin:6px 0; font-size:1rem;"><strong style="color:var(--blood-light);">${nombreMuerto}</strong> <span style="color:var(--text-mute); font-size:0.85rem;">(Era: <strong style="color:var(--daylight);">${jMuerto ? jMuerto.rol : '?'}</strong>)</span></p>`;
+                            });
+                            controlesHTML += `</div>`;
+                        } else {
+                            controlesHTML += `<p style="font-size: 1.15rem; font-style: italic; color: var(--text-mute); line-height: 1.6;">"El pueblo no logró llegar a un acuerdo. Nadie será ejecutado hoy... pero la noche se acerca."</p>`;
+                        }
+                        controlesHTML += `</div>`;
+
+                        if (sala.victoria_pendiente) {
+                            controlesHTML += `
+                            <div style="background: linear-gradient(180deg, rgba(245,158,11,0.15), rgba(230,57,70,0.1)); border: 1px solid var(--daylight); padding: 16px; border-radius: 6px; text-align:center;">
+                                <p style="color:var(--daylight); font-weight:bold; margin:0 0 10px 0;"> Esto termina la partida. Narra el desenlace con calma y, cuando estés listo:</p>
+                                <button style="background:var(--daylight); color:#000; width:100%; font-weight:bold;" onclick="revelarResultado()"> Revelar resultado final</button>
+                            </div>`;
+                        } else {
+                            controlesHTML += `<button style="background:var(--moonlight); color:#000; width:100%; margin-top:8px; font-weight:bold;" onclick="anunciarNoche()"> Declarar la Noche</button>`;
+                        }
+                    }
+
+                    // HISTORIAL DE LA PARTIDA
+                    registrarHistorialSiNuevo(sala);
+                    if (historialEventos.length > 0) {
+                        controlesHTML += `
+                        <details style="margin-top:24px; border-top:1px solid var(--border-subtle); padding-top:14px;">
+                            <summary style="cursor:pointer; color:var(--text-mute); font-family:'Space Mono',monospace; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.1em;"> Historial de la partida (${historialEventos.length})</summary>
+                            <div style="margin-top:10px; max-height:220px; overflow-y:auto;">
+                                ${historialEventos.slice().reverse().map(ev => `<p style="font-size:0.85rem; color:var(--text-secondary); margin:6px 0; padding-left:10px; border-left:2px solid var(--border-subtle);">${ev}</p>`).join('')}
+                            </div>
+                        </details>`;
+                    }
+                }
             }
-            if (bruja) {
-                const pVida = bruja.pocion_vida ? `<span style="color:var(--emerald)">✓</span>` : `<span style="color:var(--blood-light)">✗</span>`;
-                const pMuerte = bruja.pocion_muerte ? `<span style="color:var(--emerald)">✓</span>` : `<span style="color:var(--blood-light)">✗</span>`;
-                const estadoBruja = bruja.vivo ? "Viva" : "Muerta";
-                controlesHTML += `
-                <div style="flex:1; min-width:140px; background: rgba(0,0,0,0.25); border-left: 2px solid var(--violet); padding: 10px; border-radius: 4px;">
-                    <span style="color: var(--violet); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.1em; display:block; margin-bottom:4px;">Bruja (${estadoBruja})</span>
-                    <span style="font-size: 0.85rem; color: #fff;">Vida: ${pVida} | Muerte: ${pMuerte}</span>
-                </div>`;
-            }
-            controlesHTML += `</div>`;
-        }
-
-        // ZONA DE ACCIÓN EN VIVO
-        //controlesHTML += `<p class="overline" style="color: var(--daylight); border-bottom: 1px solid rgba(245, 158, 11, 0.2); padding-bottom: 6px;"> En vivo: ${sala.estado.replace(/_/g, ' ').toUpperCase()}</p>`;
-
-        if (sala.estado === "turno_cupido") {
-            const cupido = sala.jugadores.find(j => j.rol === "Cupido");
-            controlesHTML += `<div style="background: rgba(236,72,153,0.08); border: 1px dashed #EC4899; padding: 12px; border-radius: 4px; margin-bottom: 16px; text-align:center;">
-                <span style="font-size:1.2rem;">enamorados</span><br>
-                <span style="color:#EC4899; font-size:0.9rem;">Esperando a que <strong>${cupido ? cupido.nombre : "Cupido"}</strong> elija a los enamorados...</span>
-            </div>`;
-        }
-
-        else if (sala.estado === "turno_vidente") {
-            const vidente = sala.jugadores.find(j => j.rol === "Vidente" && j.vivo);
-            controlesHTML += `<div style="background: rgba(142,202,230,0.08); border: 1px dashed var(--moonlight); padding: 12px; border-radius: 4px; margin-bottom: 16px; text-align:center;">
-                <span style="font-size:1.2rem;">revelacion</span><br>
-                <span style="color:var(--moonlight); font-size:0.9rem;">Esperando a que <strong>${vidente ? vidente.nombre : "la Vidente"}</strong> investigue a alguien...</span>
-            </div>`;
-        }
-
-        else if (sala.estado === "turno_lobos" || sala.estado === "confirmando_lobos") {
-            const votosLobos = sala.votos_lobos || [];
-            const lobosVivos = sala.jugadores.filter(j => j.rol === 'Hombre Lobo' && j.vivo);
-            controlesHTML += `<div style="background: rgba(255,255,255,0.03); border: 1px dashed rgba(230,57,70,0.3); padding: 12px; border-radius: 4px; margin-bottom: 16px;">`;
-            controlesHTML += `<p style="margin:0 0 10px 0; color:var(--text-primary); font-size:0.9rem;">🐺 <strong>El debate de la manada:</strong></p>`;
-            lobosVivos.forEach(lobo => {
-                const voto = votosLobos.find(v => v.lobo === lobo.nombre);
-                const textoVoto = voto ? `<strong style="color:var(--blood-light);">${voto.voto}</strong>` : `<span style="color:var(--text-mute); font-style:italic;">decidiendo...</span>`;
-                controlesHTML += `<p style="margin: 4px 0; font-size: 0.95rem;">${lobo.nombre} ➔ ${textoVoto}</p>`;
-            });
-            controlesHTML += `</div>`;
-        }
-
-        else if (sala.estado === "turno_bruja") {
-            const brujaViva = sala.jugadores.find(j => j.rol === "Bruja" && j.vivo);
-            const victima = sala.victima_lobos;
-            controlesHTML += `<div style="background: rgba(167,139,250,0.08); border: 1px dashed var(--violet); padding: 12px; border-radius: 4px; margin-bottom: 16px; text-align:center;">
-                <span style="font-size:1.2rem;">pocion</span><br>
-                <span style="color:var(--violet); font-size:0.9rem;">Los lobos eligieron a <strong>${victima ?? "nadie"}</strong>. Esperando la decisión de <strong>${brujaViva ? brujaViva.nombre : "la Bruja"}</strong>...</span>
-            </div>`;
-        }
-
-        else if (sala.estado === "esperando_narrador_dia") {
-            const reporteMuertes = sala.reporte_muertes || [];
-            const cazadorMurioEstaNoche = sala.jugadores.some(j => j.rol === "Cazador" && reporteMuertes.includes(j.nombre));
-
-            controlesHTML += `
-            <div style="background: linear-gradient(180deg, rgba(20,30,40,0.8) 0%, rgba(10,15,20,0.9) 100%); border: 1px solid var(--moonlight); padding: 16px; border-radius: 6px; margin-bottom: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
-                <h3 style="margin-top:0; color:var(--moonlight); border-bottom:1px solid rgba(142,202,230,0.2); padding-bottom:8px; font-size:1.3rem;"> Guion del Amanecer</h3>
-                <p style="color:var(--text-mute); font-size:0.8rem; text-transform:uppercase; margin-bottom:12px;">Lee esto en voz alta:</p>`;
-
-            if (reporteMuertes.length > 0) {
-                controlesHTML += `<p style="font-size: 1.15rem; font-style: italic; color: #fff; line-height: 1.6;">"La aldea despierta... pero una espesa bruma trae olor a sangre. Esta noche, la tragedia se ha llevado a <strong>${reporteMuertes.length}</strong> de los nuestros..."</p>`;
-                controlesHTML += `<div style="background:rgba(0,0,0,0.4); padding:10px; border-radius:4px; margin-top:12px;">`;
-                reporteMuertes.forEach(nombreMuerto => {
-                    const jMuerto = sala.jugadores.find(j => j.nombre === nombreMuerto);
-                    let nota = "Asesinato";
-                    if (jMuerto?.enamorado) nota += " o Suicidio por amor";
-                    controlesHTML += `<p style="margin:6px 0; font-size:1rem;"><strong style="color:var(--blood-light);">${nombreMuerto}</strong> <span style="color:var(--text-mute); font-size:0.85rem;">(Era: <strong style="color:var(--daylight);">${jMuerto ? jMuerto.rol : '?'}</strong>)</span> <br><span style="color:gray; font-size:0.75rem;">Causa: ${nota}</span></p>`;
-                });
-                controlesHTML += `</div>`;
-            } else {
-                controlesHTML += `<p style="font-size: 1.15rem; font-style: italic; color: var(--emerald); line-height: 1.6;">"Abran los ojos. Un milagro ha ocurrido... A pesar de los aullidos en la oscuridad y el peligro acechante, <strong>todos</strong> han logrado sobrevivir esta noche."</p>`;
-            }
-            controlesHTML += `</div>`;
-
-            if (sala.victoria_pendiente) {
-                controlesHTML += `
-                <div style="background: linear-gradient(180deg, rgba(245,158,11,0.15), rgba(230,57,70,0.1)); border: 1px solid var(--daylight); padding: 16px; border-radius: 6px; text-align:center;">
-                    <p style="color:var(--daylight); font-weight:bold; margin:0 0 10px 0;"> Esto termina la partida. Narra el desenlace con calma y, cuando estés listo:</p>
-                    <button style="background:var(--daylight); color:#000; width:100%; font-weight:bold;" onclick="revelarResultado()"> Revelar resultado final</button>
-                </div>`;
-            } else if (cazadorMurioEstaNoche) {
-                controlesHTML += `<p style="color:var(--daylight); text-align:center; font-style:italic;">El Cazador ha caído. Anúncialo y dale su turno:</p>`;
-                controlesHTML += `<button style="background:var(--daylight); color:#000; width:100%; margin-top:8px; font-weight:bold;" onclick="anunciarDia()">Dar Turno al Cazador </button>`;
-            } else {
-                controlesHTML += `<button style="background:var(--daylight); color:#000; width:100%; margin-top:8px; font-weight:bold;" onclick="anunciarDia()"> Declarar que es de Día</button>`;
-            }
-        }
-
-        else if (sala.estado === "turno_cazador") {
-            controlesHTML += `<p style="color:var(--daylight); font-style:italic; text-align:center;">El Cazador está agonizando y a punto de disparar... espera su decisión.</p>`;
-        }
-
-        else if (sala.estado === "esperando_narrador_amanecer") {
-            controlesHTML += `<p style="color:var(--text-mute); text-align:center;">El disparo ha sonado. Ya puedes declarar el amanecer.</p>`;
-            controlesHTML += `<button style="background:var(--daylight); color:#000; width:100%; font-weight:bold; margin-top:10px;" onclick="anunciarAmanecer()"> Que amanezca</button>`;
-        }
-
-        else if (sala.estado === "dia") {
-            const votosDia = sala.votos_dia || [];
-            const jugadoresVivos = sala.jugadores.filter(j => j.vivo && j.rol !== "narrador");
-            controlesHTML += `<div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-subtle); padding: 14px; border-radius: 4px;">`;
-            controlesHTML += `<p style="margin-top:0; color:var(--text-mute); font-size:0.85rem;">Votos emitidos: <strong style="color:#fff;">${votosDia.length} / ${jugadoresVivos.length}</strong></p>`;
-            const conteo = {};
-            votosDia.forEach(v => { conteo[v.acusado] = (conteo[v.acusado] || 0) + v.peso; });
-            sala.jugadores.filter(j => j.vivo && j.rol !== 'narrador').forEach(j => {
-                const votos = conteo[j.nombre] || 0;
-                const barra = votos > 0
-                    ? `<span style="color:var(--daylight); font-weight:bold;">${'█'.repeat(votos)} ${votos}</span>`
-                    : `<span style="color:var(--text-mute); font-size:0.8rem;">0</span>`;
-                controlesHTML += `<div style="display:flex; justify-content:space-between; margin-bottom:6px; font-size:0.95rem;"><span>${j.nombre}</span> ${barra}</div>`;
-            });
-            const votosAbs = conteo['abstencion'] || 0;
-            if (votosAbs > 0) {
-                controlesHTML += `<div style="display:flex; justify-content:space-between; margin-top:10px; padding-top:10px; border-top:1px solid rgba(255,255,255,0.1); font-size:0.95rem;">
-                    <span style="color:var(--text-mute)">Abstención</span>
-                    <span style="color:var(--daylight); font-weight:bold;">${'█'.repeat(votosAbs)} ${votosAbs}</span>
-                </div>`;
-            }
-            controlesHTML += `</div>`;
-        }
-
-        else if (sala.estado === "esperando_narrador_noche") {
-            const ultimoLinchado = sala.ultimo_linchado || [];
-
-            controlesHTML += `<div style="background: rgba(20,20,30,0.8); border: 1px solid var(--moonlight); padding: 16px; border-radius: 6px; margin-bottom: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);">`;
-            controlesHTML += `<h3 style="margin-top:0; color:var(--moonlight); border-bottom:1px solid rgba(142,202,230,0.2); padding-bottom:8px; font-size:1.3rem;"> Votacion del Pueblo</h3>`;
-
-            if (ultimoLinchado.length > 0) {
-                controlesHTML += `<p style="font-size: 1.15rem; font-style: italic; color: #fff; line-height: 1.6;">"La aldea ha tomado una decisión. Hoy, el pueblo ha decidido ejecutar a..."</p>`;
-                controlesHTML += `<div style="background:rgba(0,0,0,0.4); padding:10px; border-radius:4px; margin-top:12px;">`;
-                ultimoLinchado.forEach(nombreMuerto => {
-                    const jMuerto = sala.jugadores.find(j => j.nombre === nombreMuerto);
-                    controlesHTML += `<p style="margin:6px 0; font-size:1rem;"><strong style="color:var(--blood-light);">${nombreMuerto}</strong> <span style="color:var(--text-mute); font-size:0.85rem;">(Era: <strong style="color:var(--daylight);">${jMuerto ? jMuerto.rol : '?'}</strong>)</span></p>`;
-                });
-                controlesHTML += `</div>`;
-            } else {
-                controlesHTML += `<p style="font-size: 1.15rem; font-style: italic; color: var(--text-mute); line-height: 1.6;">"El pueblo no logró llegar a un acuerdo. Nadie será ejecutado hoy... pero la noche se acerca."</p>`;
-            }
-            controlesHTML += `</div>`;
-
-            if (sala.victoria_pendiente) {
-                controlesHTML += `
-                <div style="background: linear-gradient(180deg, rgba(245,158,11,0.15), rgba(230,57,70,0.1)); border: 1px solid var(--daylight); padding: 16px; border-radius: 6px; text-align:center;">
-                    <p style="color:var(--daylight); font-weight:bold; margin:0 0 10px 0;"> Esto termina la partida. Narra el desenlace con calma y, cuando estés listo:</p>
-                    <button style="background:var(--daylight); color:#000; width:100%; font-weight:bold;" onclick="revelarResultado()"> Revelar resultado final</button>
-                </div>`;
-            } else {
-                controlesHTML += `<button style="background:var(--moonlight); color:#000; width:100%; margin-top:8px; font-weight:bold;" onclick="anunciarNoche()"> Declarar la Noche</button>`;
-            }
-        }
-
-        // HISTORIAL DE LA PARTIDA
-        registrarHistorialSiNuevo(sala);
-        if (historialEventos.length > 0) {
-            controlesHTML += `
-            <details style="margin-top:24px; border-top:1px solid var(--border-subtle); padding-top:14px;">
-                <summary style="cursor:pointer; color:var(--text-mute); font-family:'Space Mono',monospace; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.1em;"> Historial de la partida (${historialEventos.length})</summary>
-                <div style="margin-top:10px; max-height:220px; overflow-y:auto;">
-                    ${historialEventos.slice().reverse().map(ev => `<p style="font-size:0.85rem; color:var(--text-secondary); margin:6px 0; padding-left:10px; border-left:2px solid var(--border-subtle);">${ev}</p>`).join('')}
-                </div>
-            </details>`;
-        }
-    }
-}
 
             // ESPERANDO QUE EL NARRADOR ANUNCIE EL DÍA
             else if (sala.estado === "esperando_narrador_dia" && miRol !== "narrador") {
@@ -1306,7 +1345,15 @@ if (respuesta.status === 404) {
                     entrarAlLobby(params.get("debug_narrador") === "true");
                 return; // no usamos localStorage aquí, así cada iframe queda independiente
             }
-
+            
+            // 2. MAGIA DEL QR: Autocompletar el código de la sala
+            const salaEscaneada = params.get("sala");
+            if (salaEscaneada) {
+                const inputSala = document.getElementById("input-codigo");
+                if (inputSala) {
+                    inputSala.value = salaEscaneada.toUpperCase();
+                }
+            }
             
 
             // Borrar solo para pruebas }
