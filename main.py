@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 from collections import Counter
 from pymongo import ReturnDocument
+from datetime import datetime, timedelta, timezone
 import random
 import string
 import secrets
@@ -154,9 +155,16 @@ async def estado_servidor():
 
 @app.post("/crear-sala")
 async def crear_sala(datos: CrearSalaRequest):
-    # 1. LA BARREDORA: Eliminamos las partidas terminadas
+    
+    # Definimos el límite de tiempo (ej. 2 horas de antigüedad)
+    tiempo_limite = datetime.now(timezone.utc) - timedelta(hours=2)
+
+    # 1. LA BARREDORA 2.0: Elimina partidas terminadas O partidas abandonadas por más de 2 horas
     await db.partidas.delete_many({
-        "estado": {"$in": ["victoria_lobos", "victoria_aldeanos"]}
+        "$or": [
+            {"estado": {"$in": ["victoria_lobos", "victoria_aldeanos"]}},
+            {"fecha_creacion": {"$lt": tiempo_limite}}
+        ]
     })
 
     # 2. EL CADENERO: Contamos las partidas que siguen activas
@@ -178,7 +186,8 @@ async def crear_sala(datos: CrearSalaRequest):
         "jugadores": [
             {"nombre": datos.nombre_narrador, "rol": "narrador", "vivo": True, "token": token_narrador}
         ],
-        "ciclo": 1
+        "ciclo": 1,
+        "fecha_creacion": datetime.now(timezone.utc)    
     }
     
     await db.partidas.insert_one(nueva_partida)
@@ -387,7 +396,7 @@ async def narrador_avanzar(datos: NarradorAvanzarRequest):
                 }
             }
         )
-        
+
     else:
         await db.partidas.update_one(
             {"codigo_sala": datos.codigo_sala},
