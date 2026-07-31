@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 import random
 import string
 import secrets
+import re
 
 
 # 1. Configuración de Base de Datos
@@ -155,6 +156,13 @@ async def estado_servidor():
 
 @app.post("/crear-sala")
 async def crear_sala(datos: CrearSalaRequest):
+    # --- ESCUDO DE SEGURIDAD (Limpieza de nombre) ---
+    nombre_limpio = re.sub(r'[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ ]', '', datos.nombre_narrador).strip()
+    
+    # Validamos que tenga entre 3 y 15 caracteres
+    if len(nombre_limpio) < 3 or len(nombre_limpio) > 15:
+        raise HTTPException(status_code=400, detail="Nombre inválido. Debe tener entre 3 y 15 caracteres (solo letras y números).")
+    # ------------------------------------------------
     
     # Definimos el límite de tiempo (ej. 2 horas de antigüedad)
     tiempo_limite = datetime.now(timezone.utc) - timedelta(hours=2)
@@ -184,7 +192,7 @@ async def crear_sala(datos: CrearSalaRequest):
         "codigo_sala": codigo,
         "estado": "esperando_jugadores",
         "jugadores": [
-            {"nombre": datos.nombre_narrador, "rol": "narrador", "vivo": True, "token": token_narrador}
+            {"nombre": nombre_limpio, "rol": "narrador", "vivo": True, "token": token_narrador} # Usamos nombre_limpio
         ],
         "ciclo": 1,
         "fecha_creacion": datetime.now(timezone.utc)    
@@ -194,6 +202,7 @@ async def crear_sala(datos: CrearSalaRequest):
     
     return {"mensaje": "Sala creada con éxito", "codigo": codigo, "token": token_narrador}
 
+
 class UnirseSalaRequest(BaseModel):
     nombre_jugador: str
     codigo_sala: str
@@ -201,12 +210,21 @@ class UnirseSalaRequest(BaseModel):
 
 @app.post("/unirse-sala")
 async def unirse_sala(datos: UnirseSalaRequest):
+    # --- ESCUDO DE SEGURIDAD (Limpieza de nombre) ---
+    nombre_limpio = re.sub(r'[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ ]', '', datos.nombre_jugador).strip()
+    
+    # Validamos que tenga entre 3 y 15 caracteres
+    if len(nombre_limpio) < 3 or len(nombre_limpio) > 15:
+        raise HTTPException(status_code=400, detail="Nombre inválido. Debe tener entre 3 y 15 caracteres (solo letras y números).")
+    # ------------------------------------------------
+
     sala = await db.partidas.find_one({"codigo_sala": datos.codigo_sala})
 
     if not sala:
         raise HTTPException(status_code=404, detail="Sala no encontrada. Verifica el código.")
 
-    jugador_existente = next((j for j in sala["jugadores"] if j["nombre"].lower() == datos.nombre_jugador.lower()), None)
+    # Usamos nombre_limpio para buscar si ya existe
+    jugador_existente = next((j for j in sala["jugadores"] if j["nombre"].lower() == nombre_limpio.lower()), None)
 
     if jugador_existente:
         if sala["estado"] == "esperando_jugadores":
@@ -214,14 +232,15 @@ async def unirse_sala(datos: UnirseSalaRequest):
         # La partida ya inició: solo se permite "reconectar" con el token correcto
         if not datos.token or datos.token != jugador_existente.get("token"):
             raise HTTPException(status_code=403, detail="Ese nombre ya pertenece a otro jugador en esta partida.")
-        return {"mensaje": f"Reconectando a {datos.nombre_jugador}...", "token": jugador_existente["token"]}
+        # Usamos nombre_limpio en el mensaje
+        return {"mensaje": f"Reconectando a {nombre_limpio}...", "token": jugador_existente["token"]}
 
     if sala["estado"] != "esperando_jugadores":
         raise HTTPException(status_code=400, detail="La partida ya comenzó o está cerrada.")
 
     nuevo_token = secrets.token_hex(12)
     nuevo_jugador = {
-        "nombre": datos.nombre_jugador, 
+        "nombre": nombre_limpio, # Guardamos el nombre ya limpio
         "rol": "por_asignar", 
         "vivo": True,
         "token": nuevo_token
@@ -232,7 +251,8 @@ async def unirse_sala(datos: UnirseSalaRequest):
         {"$push": {"jugadores": nuevo_jugador}}
     )
     
-    return {"mensaje": f"¡{datos.nombre_jugador} se ha unido a la sala {datos.codigo_sala}!", "token": nuevo_token}
+    # Usamos nombre_limpio en el mensaje final
+    return {"mensaje": f"¡{nombre_limpio} se ha unido a la sala {datos.codigo_sala}!", "token": nuevo_token}
 
 @app.get("/sala/{codigo_sala}")
 async def obtener_sala(codigo_sala: str):
